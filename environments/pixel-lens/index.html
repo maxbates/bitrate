@@ -59,6 +59,22 @@
     <div id="card"></div>
   </div>
 
+  <!-- Settings: cell size drives N and lens magnification; every change is
+       a new content-addressed variant. -->
+  <button id="gear" title="settings">⚙ settings</button>
+  <div id="sheet">
+    <div class="sh-row">
+      <span class="sh-label">cell size</span>
+      <div class="seg" id="seg-cell">
+        <button data-v="3">3 mm</button>
+        <button data-v="5">5 mm</button>
+        <button data-v="7.5">7.5 mm</button>
+        <button data-v="10">10 mm</button>
+      </div>
+    </div>
+    <div class="sh-foot" id="sheet-info"></div>
+  </div>
+
 <script src="../common/results.js"></script>
 <script src="game.js"></script>
 </body>
