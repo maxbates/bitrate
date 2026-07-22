@@ -23,20 +23,27 @@ import "math"
 // correction selection (matches KeyboardEvent.key).
 const BackspaceKey = "Backspace"
 
-// Selection is one logged selection event, replayed server-side.
+// Selection is one logged selection event, replayed server-side. The
+// symbol vocabulary is environment-specific (a folded character, a grid
+// cell index, ...) — always compared as canonical strings. X/Y carry
+// pointer coordinates where the environment has them (Fitts analysis,
+// spec §3c); absent for keyboards.
 type Selection struct {
 	Index      int      `json:"i"`            // monotonic selection index
-	Key        string   `json:"key"`          // folded character or "Backspace"
+	Key        string   `json:"key"`          // canonical symbol or "Backspace"
 	Expected   string   `json:"expected"`     // client's view; informational only
 	Verdict    bool     `json:"verdict"`      // client's verdict; informational only
 	TShownMs   float64  `json:"t_shown_ms"`   // target entered fixation position
 	TPressedMs float64  `json:"t_pressed_ms"` // keydown, ms since first scored keypress
 	TKeyupMs   *float64 `json:"t_keyup_ms"`   // best-effort; feeds §6 bot heuristics
+	X          *float64 `json:"x,omitempty"`  // pointer environments only
+	Y          *float64 `json:"y,omitempty"`
 }
 
-// Replay walks a selection log against the served sequence and returns
-// Sc, Si. It trusts only key identities and order — never client verdicts.
-func Replay(seq string, keys []Selection) (sc, si int) {
+// Replay walks a selection log against the served symbol sequence and
+// returns Sc, Si. It trusts only key identities and order — never client
+// verdicts.
+func Replay(syms []string, keys []Selection) (sc, si int) {
 	pos := 0
 	// errs[i] records whether the (uncorrected) selection at position i was
 	// an error; truncated on backspace so it always mirrors the cursor.
@@ -56,12 +63,12 @@ func Replay(seq string, keys []Selection) (sc, si int) {
 			}
 			continue
 		}
-		if pos >= len(seq) {
+		if pos >= len(syms) {
 			// Sequence exhausted (should not happen at SequenceLen; the
 			// client ends the bout). Ignore rather than invent ground truth.
 			continue
 		}
-		ok := len(k.Key) == 1 && k.Key[0] == seq[pos]
+		ok := k.Key == syms[pos]
 		if ok {
 			sc++
 		} else {

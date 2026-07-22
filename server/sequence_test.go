@@ -45,6 +45,53 @@ func TestGoldenVectors(t *testing.T) {
 	}
 }
 
+// Numeric-alphabet derivation (GenSequenceInts) — same freeze rules.
+func TestGoldenVectorsInts(t *testing.T) {
+	seedA := bytes.Repeat([]byte{0x00}, 32)
+	seedB := []byte("0123456789abcdef0123456789abcdef")
+	cases := []struct {
+		name string
+		seed []byte
+		m    int
+		want []int
+	}{
+		{"zero seed / m=627", seedA, 627,
+			[]int{291, 597, 388, 34, 500, 446, 337, 378, 353, 196, 4, 524, 48, 106, 96, 42}},
+		{"ascii seed / m=627", seedB, 627,
+			[]int{277, 283, 284, 119, 338, 320, 223, 202, 496, 141, 453, 507, 85, 202, 182, 330}},
+		{"zero seed / m=1000003", seedA, 1000003,
+			[]int{439352, 577587, 384605, 287162, 422824, 390551, 468232, 75649}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := GenSequenceInts(c.seed, c.m, len(c.want))
+			for i := range c.want {
+				if got[i] != c.want[i] {
+					t.Fatalf("derivation changed!\n got  %v\n want %v", got, c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSequenceIntsUniformity(t *testing.T) {
+	seed, _ := NewSeed()
+	const m, n = 50, 100000 // expect 2000 per symbol
+	out := GenSequenceInts(seed, m, n)
+	counts := make([]int, m)
+	for _, v := range out {
+		if v < 0 || v >= m {
+			t.Fatalf("value %d outside [0,%d)", v, m)
+		}
+		counts[v]++
+	}
+	for sym, c := range counts {
+		if c < 1700 || c > 2300 { // ±6.7 sigma
+			t.Errorf("symbol %d count %d, expected ~2000", sym, c)
+		}
+	}
+}
+
 func TestSequenceDeterministic(t *testing.T) {
 	seed, err := NewSeed()
 	if err != nil {

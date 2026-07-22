@@ -1,0 +1,210 @@
+/* pixel-lens — huge-grid pointing with a fisheye loupe (spec §5 backlog).
+   System font stack only; no webfont fetch (spec §4.2). */
+
+:root {
+  --bg: #101216;
+  --fg: #d7dae0;
+  --dim: #565c66;
+  --faint: #2a2e36;
+  --err: #e05252;
+  --err-bg: #3a1d1d;
+  --accent: #e0b452;
+  --live: #58b368;
+  --caret: #7aa2f7;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ---- top bar ---- */
+
+#topbar {
+  position: relative;
+  height: 78px;
+  border-bottom: 1px solid var(--faint);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#res-info {
+  color: var(--dim);
+  font-size: 14px;
+  text-align: center;
+}
+#res-info b { color: var(--fg); font-weight: normal; }
+
+#corner { position: absolute; top: 12px; left: 18px; }
+#mode-banner {
+  display: inline-block;
+  font-size: 13px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+.mode-practice { color: var(--dim); border: 1px solid var(--faint); }
+.mode-practice-live { color: var(--live); border: 1px solid var(--live); }
+.mode-armed    { color: #111; background: var(--accent); }
+.mode-scored   { color: var(--err); border: 1px solid var(--err); }
+.mode-scored::before { content: "● "; }
+
+#mode-help { margin-top: 6px; font-size: 12px; line-height: 1.6; }
+#mode-help .act { color: var(--dim); display: block; }
+#mode-help .act.click { cursor: pointer; }
+#mode-help .act.click:hover { color: var(--fg); }
+#mode-help kbd {
+  color: var(--fg);
+  border: 1px solid var(--faint);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 11px;
+  margin-right: 6px;
+}
+#mode-help .armed-note { color: var(--accent); }
+
+#hud {
+  position: absolute;
+  top: 8px;
+  right: 18px;
+  text-align: right;
+  color: var(--dim);
+  font-size: 14px;
+  line-height: 1.45;
+}
+#hud-bps { font-size: 18px; }
+.hud-unit { font-size: 12px; }
+
+/* ---- the field ---- */
+
+#field {
+  position: absolute;
+  top: 78px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  cursor: none; /* the loupe is the cursor */
+  overflow: hidden;
+  /* Faint 1-cell lattice so the hitbox scale is legible. */
+  background-image:
+    linear-gradient(var(--faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--faint) 1px, transparent 1px);
+  background-size: var(--cell, 38px) var(--cell, 38px);
+  opacity: .999; /* own compositing layer */
+}
+body.armed #field { cursor: none; }
+
+/* ---- target: a glowing point + bull's-eye spawn cue ---- */
+
+#target {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+#target .dot {
+  position: absolute;
+  left: -3px;
+  top: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px 2px rgba(224, 180, 82, .75);
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  50% { box-shadow: 0 0 16px 5px rgba(224, 180, 82, .5); }
+}
+#target .ring {
+  position: absolute;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+/* Bull's-eye: two rings collapse onto the target fast, then vanish —
+   attention capture without persistent clutter. */
+#target.cue .r1 { animation: ring-in .45s ease-out 1; }
+#target.cue .r2 { animation: ring-in .45s ease-out .12s 1; }
+@keyframes ring-in {
+  0%   { opacity: .9; left: -140px; top: -140px; width: 280px; height: 280px; }
+  100% { opacity: 0;  left: -8px;   top: -8px;   width: 16px;  height: 16px; }
+}
+
+/* ---- loupe ---- */
+
+#loupe {
+  position: absolute;
+  width: 148px;
+  height: 148px;
+  margin: -74px 0 0 -74px; /* centered on cursor */
+  border-radius: 50%;
+  border: 2px solid var(--dim);
+  overflow: hidden;
+  pointer-events: none;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, .5);
+}
+#loupe-canvas { width: 100%; height: 100%; display: block; }
+#loupe-arrow {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 148px;
+  height: 0;
+  margin-left: -74px;
+  color: var(--accent);
+  font-size: 18px;
+  line-height: 0;
+  text-align: right;
+  pointer-events: none;
+  /* rotated via transform in JS; ▸ sits at the ring edge */
+}
+
+/* ---- notice line (esc-again, invalidation) ---- */
+
+#notice {
+  position: fixed;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 14px;
+  color: var(--accent);
+  z-index: 6;
+}
+#notice.warn { color: var(--err); }
+#notice b { color: inherit; font-weight: bold; }
+
+/* ---- error overlay ---- */
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 14, .88);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10;
+}
+#card {
+  text-align: center;
+  padding: 3rem 4rem;
+  border: 1px solid var(--faint);
+  border-radius: 12px;
+  background: var(--bg);
+}
+#card .title { color: var(--dim); font-size: 14px; letter-spacing: .15em; text-transform: uppercase; margin-bottom: 1rem; }
+#card .row { color: var(--dim); margin-top: 1rem; font-size: 16px; }
+#card .row b { color: var(--fg); font-weight: normal; }
+#card .note { color: var(--dim); margin-top: 1.4rem; font-size: 13px; }

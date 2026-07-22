@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bit-rate — pixel lens</title>
+<link rel="stylesheet" href="game.css">
+<link rel="stylesheet" href="../common/results.css">
+</head>
+<body>
+  <!-- Top bar: the honest accounting, always visible — viewport resolution
+       and the derived alphabet. N is the hitbox grid, not raw pixels: any
+       click inside a cell selects it, so cells are the distinguishable
+       selections (spec §5 pixel-lens). -->
+  <div id="topbar">
+    <div id="corner">
+      <div id="mode-banner" class="mode-practice">practice</div>
+      <div id="mode-help"></div>
+    </div>
+    <div id="res-info"></div>
+    <div id="hud">
+      <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
+      <div id="hud-time"></div>
+      <div id="hud-counts"></div>
+    </div>
+  </div>
+
+  <main id="field">
+    <div id="target" hidden>
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+      <div class="dot"></div>
+    </div>
+    <div id="loupe" hidden>
+      <canvas id="loupe-canvas"></canvas>
+      <div id="loupe-arrow" hidden>▸</div>
+    </div>
+  </main>
+
+  <div id="notice" hidden></div>
+
+  <section id="results" hidden>
+    <div id="res-hero"></div>
+    <div id="res-tiles"></div>
+    <div id="res-charts">
+      <figure>
+        <figcaption>pace — net bits/s per 5&thinsp;s <span class="err-key">▎misses</span></figcaption>
+        <div id="chart-pace"></div>
+      </figure>
+      <figure>
+        <figcaption>gap between selections</figcaption>
+        <div id="chart-iki"></div>
+      </figure>
+    </div>
+    <div id="res-footer">press <b>Enter</b> for a new scored run · <b>Esc</b> for practice</div>
+  </section>
+
+  <div id="overlay" hidden>
+    <div id="card"></div>
+  </div>
+
+<script src="../common/results.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

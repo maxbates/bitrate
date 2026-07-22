@@ -28,9 +28,9 @@ type server struct {
 }
 
 type pendingRun struct {
-	run      *Run
-	cfg      *Config
-	sequence string
+	run     *Run
+	cfg     *Config
+	symbols []string // canonical per-selection symbols (chars or cell indices)
 }
 
 func newServer(store *Store, env fs.FS) *server {
@@ -39,8 +39,13 @@ func newServer(store *Store, env fs.FS) *server {
 
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
-	// Gallery arrives in step 6; until then / is the baseline environment.
-	mux.Handle("GET /{$}", http.RedirectHandler("/env/stream-typing/", http.StatusFound))
+	// Lab: / is the environment chooser (grows into the step-6 gallery).
+	// Ship: / is the frozen game, straight away.
+	if buildProfile == "lab" {
+		mux.Handle("GET /{$}", http.RedirectHandler("/env/", http.StatusFound))
+	} else {
+		mux.Handle("GET /{$}", http.RedirectHandler("/env/stream-typing/", http.StatusFound))
+	}
 	static := http.StripPrefix("/env/", http.FileServerFS(s.env))
 	mux.HandleFunc("GET /env/", func(w http.ResponseWriter, r *http.Request) {
 		if s.dev {
@@ -64,12 +69,13 @@ type startReq struct {
 }
 
 type startResp struct {
-	RunID      string  `json:"run_id"`
-	Seed       string  `json:"seed"`
-	Sequence   string  `json:"sequence"`
-	ConfigHash string  `json:"config_hash"`
-	N          int     `json:"n"`
-	DurationS  float64 `json:"duration_s"`
+	RunID        string  `json:"run_id"`
+	Seed         string  `json:"seed"`
+	Sequence     string  `json:"sequence,omitempty"`      // character alphabets
+	SequenceInts []int   `json:"sequence_ints,omitempty"` // numeric alphabets
+	ConfigHash   string  `json:"config_hash"`
+	N            int     `json:"n"`
+	DurationS    float64 `json:"duration_s"`
 }
 
 func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
@@ -120,23 +126,30 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		IsFirstContact: s.store.IsFirstContact(req.DeviceID, cfg.Hash),
 		ClientMeta:     req.ClientMeta,
 	}
-	sequence := GenSequence(seed, cfg.Alphabet, SequenceLen)
+	resp := startResp{
+		RunID:      runID,
+		Seed:       run.Seed,
+		ConfigHash: cfg.Hash,
+		N:          cfg.N(),
+		DurationS:  cfg.DurationS,
+	}
+	var symbols []string
+	if cfg.AlphabetSize > 0 {
+		resp.SequenceInts = GenSequenceInts(seed, cfg.AlphabetSize, SequenceLen)
+		symbols = IntSymbols(resp.SequenceInts)
+	} else {
+		resp.Sequence = GenSequence(seed, cfg.Alphabet, SequenceLen)
+		symbols = SplitSymbols(resp.Sequence)
+	}
 	if err := s.store.PutRun(run, false); err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.mu.Lock()
-	s.pending[runID] = &pendingRun{run: run, cfg: cfg, sequence: sequence}
+	s.pending[runID] = &pendingRun{run: run, cfg: cfg, symbols: symbols}
 	s.mu.Unlock()
 
-	writeJSON(w, startResp{
-		RunID:      runID,
-		Seed:       run.Seed,
-		Sequence:   sequence,
-		ConfigHash: cfg.Hash,
-		N:          cfg.N(),
-		DurationS:  cfg.DurationS,
-	})
+	writeJSON(w, resp)
 }
 
 // ---- /api/run/submit ----
@@ -210,7 +223,7 @@ func (s *server) handleRunSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sc, si := Replay(p.sequence, keys)
+	sc, si := Replay(p.symbols, keys)
 	bits, bps := BitRate(p.cfg.N(), sc, si, t)
 	res := &Result{
 		RunID:            req.RunID,
@@ -220,7 +233,7 @@ func (s *server) handleRunSubmit(w http.ResponseWriter, r *http.Request) {
 		BitsPerSelection: bits,
 		Bps:              bps,
 		TSeconds:         t,
-		Metrics:          ComputeMetrics(p.sequence, keys, t),
+		Metrics:          ComputeMetrics(p.symbols, keys, t),
 	}
 	// Client/server agreement check — anomalies are bugs or drift, logged
 	// never hidden (spec §4.3).

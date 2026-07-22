@@ -27,7 +27,7 @@ func TestComputeMetrics(t *testing.T) {
 		ks{"a", 0}, ks{"z", 200}, ks{BackspaceKey, 400},
 		ks{"b", 600}, ks{"c", 2500}, ks{"a", 2700},
 	)
-	m := ComputeMetrics("abcab", keys, 10)
+	m := ComputeMetrics(SplitSymbols("abcab"), keys, 10)
 
 	if m.Selections != 6 || m.Letters != 5 || m.Backspaces != 1 {
 		t.Fatalf("counts: %+v", m)
@@ -66,7 +66,7 @@ func TestComputeMetrics(t *testing.T) {
 }
 
 func TestComputeMetricsEmpty(t *testing.T) {
-	m := ComputeMetrics("abc", nil, 60)
+	m := ComputeMetrics(SplitSymbols("abc"), nil, 60)
 	if m.Selections != 0 || m.StallCount != 0 || len(m.Bins) != 12 {
 		t.Fatalf("%+v", m)
 	}
@@ -77,9 +77,9 @@ func TestMetricsAgreesWithReplay(t *testing.T) {
 	seed, _ := NewSeed()
 	seq := GenSequence(seed, lowercase, 400)
 	keys := syntheticKeystrokes(seq, 300, 150)
-	sc, si := Replay(seq, keys)
+	sc, si := Replay(SplitSymbols(seq), keys)
 	tSec := keys[len(keys)-1].TPressedMs / 1000
-	m := ComputeMetrics(seq, keys, tSec)
+	m := ComputeMetrics(SplitSymbols(seq), keys, tSec)
 	gotSc := 0
 	for _, b := range m.Bins {
 		gotSc += b.Sc

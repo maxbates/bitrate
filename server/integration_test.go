@@ -13,8 +13,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
+
+func strconvI(v int) string      { return strconv.Itoa(v) }
+func mathLog2(v float64) float64 { return math.Log2(v) }
 
 func newTestServer(t *testing.T) (*server, *httptest.Server) {
 	t.Helper()
@@ -250,6 +254,59 @@ func TestDoubleSubmitRejected(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("double submit: status %d, want 404", resp.StatusCode)
+	}
+}
+
+// Numeric-alphabet run (pixel-lens shaped): sequence_ints served, click
+// selections replayed as cell-index strings.
+func TestNumericAlphabetRunEndToEnd(t *testing.T) {
+	_, ts := newTestServer(t)
+	cfg := map[string]any{
+		"environment":   "pixel-lens",
+		"alphabet_size": float64(627),
+		"cell_mm":       float64(10),
+		"backspace":     false,
+		"duration_s":    float64(60),
+	}
+	start := postJSON[startResp](t, ts.URL+"/api/run/start", startReq{
+		DeviceID: "deadbeefdeadbeef", Config: cfg, Scored: true,
+	})
+	if start.N != 627 { // no backspace: N = alphabet_size
+		t.Fatalf("N = %d, want 627", start.N)
+	}
+	if start.Sequence != "" || len(start.SequenceInts) != SequenceLen {
+		t.Fatalf("expected sequence_ints only, got seq len %d / ints %d",
+			len(start.Sequence), len(start.SequenceInts))
+	}
+	// Click through 70 targets at 800 ms each (56 s — inside the 60 s
+	// boundary); every 9th is a miss (advance-always: a miss consumes the
+	// target).
+	x, y := 400.0, 300.0
+	var keys []Selection
+	misses := 0
+	for i := 0; i < 70; i++ {
+		key := start.SequenceInts[i]
+		if (i+1)%9 == 0 {
+			key = (key + 1) % 627
+			misses++
+		}
+		keys = append(keys, Selection{
+			Index: i, Key: strconvI(key), TPressedMs: float64(i) * 800, X: &x, Y: &y,
+		})
+	}
+	wantSc, wantSi := 70-misses, misses
+	refBps := mathLog2(626) * float64(wantSc-wantSi) / 60
+	res := postJSON[submitResp](t, ts.URL+"/api/run/submit", submitReq{
+		RunID:      start.RunID,
+		DeviceID:   "deadbeefdeadbeef",
+		Client:     &clientResult{N: 627, Sc: wantSc, Si: wantSi, Bps: refBps},
+		Keystrokes: keys,
+	})
+	if res.Sc != wantSc || res.Si != wantSi || res.Anomaly {
+		t.Fatalf("Sc=%d Si=%d anomaly=%v, want %d/%d/false", res.Sc, res.Si, res.Anomaly, wantSc, wantSi)
+	}
+	if res.Metrics == nil || res.Metrics.Selections != 70 {
+		t.Fatalf("metrics missing or wrong: %+v", res.Metrics)
 	}
 }
 

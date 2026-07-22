@@ -59,7 +59,7 @@ type Metrics struct {
 // ComputeMetrics walks the same replay state machine as scoring and
 // aggregates diagnostics. keys must already be boundary-filtered; tSec is
 // the same elapsed time the score used.
-func ComputeMetrics(seq string, keys []Selection, tSec float64) *Metrics {
+func ComputeMetrics(syms []string, keys []Selection, tSec float64) *Metrics {
 	m := &Metrics{
 		Bins:    make([]PaceBin, max(1, int(math.Ceil(tSec/BinSeconds)))),
 		IkiHist: make([]int, IkiHistBuckets),
@@ -91,8 +91,8 @@ func ComputeMetrics(seq string, keys []Selection, tSec float64) *Metrics {
 			}
 		} else {
 			m.Letters++
-			if pos < len(seq) {
-				correct = len(k.Key) == 1 && k.Key[0] == seq[pos]
+			if pos < len(syms) {
+				correct = k.Key == syms[pos]
 				if !correct {
 					m.LetterErrors++
 				}

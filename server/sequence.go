@@ -17,6 +17,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"strconv"
 	"strings"
 )
 
@@ -32,6 +33,59 @@ func NewSeed() ([]byte, error) {
 		return nil, err
 	}
 	return seed, nil
+}
+
+// GenSequenceInts derives n i.i.d. uniform indices in [0, m) from seed —
+// for environments whose alphabet is numeric (e.g. pixel-lens grid cells),
+// where m exceeds what a character alphabet can express. Pinned derivation:
+// the digest SHA-256(seed ‖ be64(k) ‖ be64(ctr)) is read as 8 big-endian
+// uint32s; the first value below 2^32 - 2^32%m (rejection sampling, no
+// modulo bias) reduces to value % m. Golden vectors in sequence_test.go.
+func GenSequenceInts(seed []byte, m, n int) []int {
+	limit := uint64(1<<32) - uint64(1<<32)%uint64(m)
+	out := make([]int, n)
+	buf := make([]byte, 0, len(seed)+16)
+	for k := 0; k < n; k++ {
+		for ctr := uint64(0); ; ctr++ {
+			buf = buf[:0]
+			buf = append(buf, seed...)
+			buf = binary.BigEndian.AppendUint64(buf, uint64(k))
+			buf = binary.BigEndian.AppendUint64(buf, ctr)
+			h := sha256.Sum256(buf)
+			done := false
+			for j := 0; j+4 <= len(h); j += 4 {
+				v := uint64(binary.BigEndian.Uint32(h[j : j+4]))
+				if v < limit {
+					out[k] = int(v % uint64(m))
+					done = true
+					break
+				}
+			}
+			if done {
+				break
+			}
+		}
+	}
+	return out
+}
+
+// SplitSymbols turns a character alphabet sequence into the canonical
+// per-selection symbol form the scorer operates on.
+func SplitSymbols(s string) []string {
+	out := make([]string, len(s))
+	for i := 0; i < len(s); i++ {
+		out[i] = string(s[i])
+	}
+	return out
+}
+
+// IntSymbols renders numeric-alphabet indices as canonical symbol strings.
+func IntSymbols(ints []int) []string {
+	out := make([]string, len(ints))
+	for i, v := range ints {
+		out[i] = strconv.Itoa(v)
+	}
+	return out
 }
 
 // GenSequence derives n i.i.d. uniform symbols from seed over alphabet.

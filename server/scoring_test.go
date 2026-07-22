@@ -44,7 +44,7 @@ func TestReplay(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			sc, si := Replay(seq, c.keys)
+			sc, si := Replay(SplitSymbols(seq), c.keys)
 			if sc != c.sc || si != c.si {
 				t.Fatalf("got Sc=%d Si=%d, want Sc=%d Si=%d", sc, si, c.sc, c.si)
 			}
@@ -83,7 +83,7 @@ func TestReplayIgnoresClientVerdicts(t *testing.T) {
 	for i := range keys {
 		keys[i].Verdict = true // client claims correct
 	}
-	sc, si := Replay("ab", keys)
+	sc, si := Replay(SplitSymbols("ab"), keys)
 	if sc != 0 || si != 2 {
 		t.Fatalf("got Sc=%d Si=%d, want 0/2", sc, si)
 	}

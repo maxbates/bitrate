@@ -18,18 +18,27 @@ import (
 // server needs. The full document is preserved verbatim-canonicalized for
 // hashing and storage.
 type Config struct {
-	Environment string
-	Alphabet    string
-	Backspace   bool
-	DurationS   float64
-	Canonical   []byte // canonical JSON (sorted keys, no whitespace)
-	Hash        string // hex SHA-256 of Canonical
+	Environment  string
+	Alphabet     string // character alphabet (typing environments), or
+	AlphabetSize int    // numeric alphabet size (grid environments) — exclusive
+	Backspace    bool
+	DurationS    float64
+	Canonical    []byte // canonical JSON (sorted keys, no whitespace)
+	Hash         string // hex SHA-256 of Canonical
+}
+
+// M returns the number of sampled symbols (excluding the correction key).
+func (c *Config) M() int {
+	if c.AlphabetSize > 0 {
+		return c.AlphabetSize
+	}
+	return len(c.Alphabet)
 }
 
 // N returns the number of possible selections including the reserved
 // backspace key when enabled (spec §1: N >= 3 required).
 func (c *Config) N() int {
-	n := len(c.Alphabet)
+	n := c.M()
 	if c.Backspace {
 		n++
 	}
@@ -43,19 +52,32 @@ func ParseConfig(raw map[string]any) (*Config, error) {
 		return nil, errors.New("config.environment required")
 	}
 	alphabet, _ := raw["alphabet"].(string)
-	if len(alphabet) < 2 {
-		return nil, errors.New("config.alphabet must have >= 2 symbols")
+	sizeF, hasSize := raw["alphabet_size"].(float64)
+	if alphabet != "" && hasSize {
+		return nil, errors.New("config: alphabet and alphabet_size are exclusive")
 	}
-	seen := map[byte]bool{}
-	for i := 0; i < len(alphabet); i++ {
-		ch := alphabet[i]
-		if ch < 0x21 || ch > 0x7e {
-			return nil, fmt.Errorf("config.alphabet: non-printable-ASCII symbol %q", ch)
+	alphabetSize := 0
+	switch {
+	case hasSize:
+		// Numeric alphabet (grid environments): symbols are indices 0..size-1.
+		if sizeF != math.Trunc(sizeF) || sizeF < 2 || sizeF > 1<<22 {
+			return nil, errors.New("config.alphabet_size must be an integer 2..2^22")
 		}
-		if seen[ch] {
-			return nil, fmt.Errorf("config.alphabet: duplicate symbol %q", ch)
+		alphabetSize = int(sizeF)
+	case len(alphabet) >= 2:
+		seen := map[byte]bool{}
+		for i := 0; i < len(alphabet); i++ {
+			ch := alphabet[i]
+			if ch < 0x21 || ch > 0x7e {
+				return nil, fmt.Errorf("config.alphabet: non-printable-ASCII symbol %q", ch)
+			}
+			if seen[ch] {
+				return nil, fmt.Errorf("config.alphabet: duplicate symbol %q", ch)
+			}
+			seen[ch] = true
 		}
-		seen[ch] = true
+	default:
+		return nil, errors.New("config needs alphabet (>= 2 symbols) or alphabet_size")
 	}
 	backspace, _ := raw["backspace"].(bool)
 	duration, _ := raw["duration_s"].(float64)
@@ -71,10 +93,11 @@ func ParseConfig(raw map[string]any) (*Config, error) {
 		}
 	}
 	cfg := &Config{
-		Environment: env,
-		Alphabet:    alphabet,
-		Backspace:   backspace,
-		DurationS:   duration,
+		Environment:  env,
+		Alphabet:     alphabet,
+		AlphabetSize: alphabetSize,
+		Backspace:    backspace,
+		DurationS:    duration,
 	}
 	if cfg.N() < 3 {
 		return nil, errors.New("N must be >= 3")
