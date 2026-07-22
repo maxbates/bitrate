@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bit-rate — stream typing</title>
+<link rel="stylesheet" href="game.css">
+</head>
+<body>
+  <!-- Peripheral HUD: corner, low contrast, exactly 1 Hz (spec §7). -->
+  <div id="hud" aria-live="off">
+    <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
+    <div id="hud-time"></div>
+    <div id="hud-counts"></div>
+  </div>
+
+  <!-- Mode + controls live together in one corner cluster: the chip says
+       which mode is active (spec §5: unmistakable, not shouty), the lines
+       under it are the actions — clickable, with their hotkeys. -->
+  <div id="corner">
+    <div id="mode-banner" class="mode-practice">practice</div>
+    <div id="mode-help"></div>
+  </div>
+
+  <div id="caps-warning" hidden>⇪ Caps Lock is on — input is case-folded, but turn it off</div>
+  <div id="ime-warning" hidden>An IME composition was detected — scored runs need direct key input</div>
+
+  <main id="stage">
+    <div id="stream-viewport">
+      <div id="caret"></div>
+      <div id="stream"></div>
+      <div id="curtain-right"></div>
+      <div id="fade-left"></div>
+    </div>
+    <div id="hint">type the letter at the caret · miss → backspace → retype</div>
+    <div id="notice" hidden></div>
+  </main>
+
+  <!-- Results view (spec §8): headline bps + server-computed diagnostics.
+       The metrics come from the result record, so any environment emitting
+       the standard selection log renders the same panels. -->
+  <section id="results" hidden>
+    <div id="res-hero"></div>
+    <div id="res-tiles"></div>
+    <div id="res-charts">
+      <figure>
+        <figcaption>pace — net bits/s per 5&thinsp;s <span class="err-key">▎misses</span></figcaption>
+        <div id="chart-pace"></div>
+      </figure>
+      <figure>
+        <figcaption>gap between selections</figcaption>
+        <div id="chart-iki"></div>
+      </figure>
+    </div>
+    <div id="res-footer">press <b>Enter</b> for a new scored run · <b>Esc</b> for practice</div>
+  </section>
+
+  <!-- Overlay card: invalidation and error states only. -->
+  <div id="overlay" hidden>
+    <div id="card"></div>
+  </div>
+
+<script src="game.js"></script>
+</body>
+</html>

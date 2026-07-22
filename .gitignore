@@ -1,1 +1,7 @@
 .context
+dist/
+data/
+bin/
+__pycache__/
+lab/.venv/
+.gstack/

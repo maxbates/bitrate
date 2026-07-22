@@ -1,0 +1,91 @@
+# The ship gate (spec §8), enforced on every commit: a grader unzips the
+# bundle and `bash run.sh` works, offline, first try. Linux runners are the
+# brief's guaranteed platform; x86_64 and arm64 both run the full gate.
+name: gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: go tests (stdlib-only, offline policy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - run: go vet ./...
+      - run: go vet -tags ship ./...
+      - run: go test ./...
+      - run: go test -tags ship ./server
+
+  ship-gate:
+    name: ship gate (${{ matrix.runner }})
+    strategy:
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r lab/requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python lab/ship_gate.py
+        working-directory: lab
+
+  # Minimal-container leg: no glibc, no xdg-open, network disabled — proves
+  # the static binary runs anywhere and the URL-printing fallback carries
+  # the day when browser-open fails (spec §8 gate step 6).
+  container:
+    name: static binary in netless alpine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - run: ./build.sh
+      - run: |
+          unzip -q dist/bitrate.zip -d dist/gate-container
+          docker run --rm --network=none -v "$PWD/dist/gate-container:/app" -w /app \
+            alpine:3.20 sh -c '
+              set -e
+              chmod +x bin/bitrate-linux-amd64
+              # No -no-browser: xdg-open is absent, and that must be harmless.
+              bin/bitrate-linux-amd64 >/tmp/out.log 2>&1 &
+              for i in $(seq 1 100); do
+                URL=$(grep -o "http://127.0.0.1:[0-9]*/" /tmp/out.log | head -1 || true)
+                [ -n "$URL" ] && break
+                sleep 0.2
+              done
+              [ -n "$URL" ] || { cat /tmp/out.log; echo "no URL printed"; exit 1; }
+              wget -qO- "$URL"env/stream-typing/ | grep -q "stream-viewport"
+              wget -qO- "$URL"env/stream-typing/game.js >/dev/null
+              echo "container leg OK: $URL served offline without glibc or xdg-open"
+            '
+
+  # A macOS leg covers the courtesy path (quarantine-simulation lives in the
+  # manual pre-submit ritual); non-blocking per spec §8.
+  macos-courtesy:
+    name: macOS courtesy path
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r lab/requirements.txt
+      - run: python -m playwright install chromium
+      - run: python lab/ship_gate.py
+        working-directory: lab

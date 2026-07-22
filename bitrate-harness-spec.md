@@ -2,6 +2,8 @@
 
 **Audience:** an implementing agent (and future me).
 **Goal:** an experiment platform for maximizing human bit rate through a computer interface, plus the polished single-variant game that ships as the deliverable.
+**Source of truth:** `swe-homework.pdf` in the repo root is the actual brief — read it before this spec; where they disagree, the PDF wins, and §1's interpretation register lists the readings we've taken. One instruction arrived outside the PDF and is authoritative anyway: **assume a Linux grading environment** (the PDF itself names no platform — do not "correct" the Linux-first packaging on that basis).
+**Status (2026-07-22):** spec locked after external review (Codex consult) and reconciliation against the PDF. Nothing is built yet; the next action is §9 build-order step 1. Treat §2's decided positions as decided.
 
 ---
 
@@ -75,6 +77,8 @@ Hick's law (RT ≈ a + b·log2 N) implies large N costs time per decision — **
 Design instruction that follows: **make N as large as the user's existing overlearned motor repertoire extends, and not one key further.** For our graders that is the 26 letters. Pushing into shifted symbols or the number row falls off the overlearning cliff — Hick's slope reappears and errors spike.
 
 **Casing (52 letters + backspace, N = 53) is expected to be a net loss.** log2(52) = 5.70 vs 4.70 is +21% bits, but uniform sampling forces ~50% capitals (we can't tune the rate without breaking i.i.d.). Same-hand shifts are slow (`A` = left-shift + left-pinky) and `c`/`C` discrimination adds a perceptual step at every target. Estimated ~-24% rate. Wash at best, worse with the error penalty. **Ship it as a variant, expect null-to-negative.**
+
+**Letters+digits (36 symbols + backspace, N=37) is the brief-hinted variant worth testing.** The brief's own example prices N=30, a nudge toward ~30-ish alphabets. Digits take bits/selection to log2(36) ≈ 5.17 (+10%), but the number row is a reach from home position with weaker overlearning; the §3(b) algebra says it must retain ~91% of letter-only speed to win (log2(26)/log2(36)). Test it as a lab variant; expect marginal-to-negative, but this one is close enough that assuming is not allowed.
 
 **Multi-character targets ("doublets") are a no-op.** Bits/sec is invariant to how you bracket keystrokes: a two-char target at N=900 takes exactly twice as long as one at N=30. Pairs are marginally better on paper (9.81 bits vs 2 x 4.86 = 9.72, because the `-1` error-correction penalty amortizes once instead of twice — a ~1% effect) but strictly worse in practice, because scoring becomes all-or-nothing. Botch either character and you forfeit ~10 bits and take a ~10-bit penalty instead of ~5 and ~5. **Given double-penalized errors, we want the finest scoring granularity available, not the coarsest.**
 
@@ -235,7 +239,16 @@ Record types (stored as JSONL — see §4.4):
 - `variant` — config_hash (the identity; see §4.4), name, config JSON, environment key (see §5), created_at
 - `run` — id (random 128-bit hex; see §4.4), variant_id, instance_id, device_id, seed, started_at, ended_at, duration_s, is_scored, is_first_contact, flags (bot-heuristic / anomaly / invalidated), client_meta (UA, screen, input device)
 - `keystroke` — run_id, index, expected, actual, t_shown_ms (when this target entered the fixation position — not when it became visible in lookahead), t_pressed_ms, t_keyup_ms (keydown/keyup jitter feeds the §6 bot heuristics)
-- `result` — run_id, N, Sc, Si, bits_per_selection, bps (server-authoritative)
+- `result` — run_id, N, Sc, Si, bits_per_selection, bps (server-authoritative), plus a server-computed `metrics` block (below)
+
+**Per-run diagnostics (`result.metrics`) — computed server-side at submit, from the selection log.** Because every environment emits the same log schema (§5 contract), these are directly comparable across modalities — the same "where did the bits go" breakdown for keyboard, webcam, or chords. The set is deliberately small:
+
+- *Rates* — gross selections/s, net correct/s
+- *Accuracy* — accuracy %, misses, corrected vs uncorrected (an uncorrected miss is a −2 swing; this pair is the "should have backspaced" diagnostic)
+- *Cadence* — median / p90 inter-selection interval; stall count and total stall time (gap > 1.5 s = deciding, not executing); dead tail after the last selection
+- *Two small series for charts* — Sc/Si per 5 s bin (pace over the run) and a 100 ms-bucket interval histogram
+
+Client renders these under the headline score as a post-run results view (tiles + two hand-rolled SVGs, per §4.2 no charting library). Don't grow this list casually: anything finer-grained (digram costs, per-key latency) belongs in the §3 analysis notebook reading the raw keystroke logs, not in every result record.
 
 **Sequence generation is server-side and seeded**, so runs are reproducible and replayable, and so identical sequences can be served for paired comparison. The **entire sequence for the run is delivered in the `run/start` response** — sized far beyond any human maximum (~2,000 characters covers 60 s at a fantasy 30 cps) — so the client never extends it and nothing needs the network mid-run. Do not have client and server co-implement a PRNG to save bytes; ship the characters. Derivation is pinned, not delegated to a library default: seed = 32 bytes from `crypto/rand`; symbol *k* = SHA-256(seed ‖ k) reduced by rejection sampling (no modulo bias); golden test vectors live in the repo so replay survives toolchain upgrades.
 
@@ -270,6 +283,8 @@ The leaderboard is **self-contained**: one `data/` directory of JSONL per server
 **The leaderboard is a query, not a table.** Best bps per (device_id, variant) over scored, completed, human-verified runs; ties broken by earlier timestamp. Because it derives entirely from `run`/`result`, merging runs merges the leaderboard for free — there is no leaderboard merge logic because there is no leaderboard state. Never materialize it.
 
 **Every leaderboard row carries its exact config and can relaunch it.** The run→variant join gives each entry its full config JSON; the row shows a config summary, and clicking it opens `/play?cfg=<config_hash>` — the game boots with precisely that configuration. Reproduce-what-you-see for free, because variants are content-addressed.
+
+**Leaderboard rows expand into a run detail view.** The row shows headline numbers (bps, N, Sc, Si, accuracy); expanding it renders the stored `result.metrics` (§4.3) with the same tiles-and-charts renderer the post-run results view uses — one renderer, two call sites. This is how modality differences get diagnosed at a glance: a webcam mode and the keyboard baseline at similar bps can have opposite cadence/accuracy signatures, and the detail view shows it without opening the analysis notebook.
 
 **The leaderboard must read well at n=2.** A grader generates one familiarization run and one scored run; the page cannot look like an empty stadium. And for repeat players it must answer "am I improving?": a per-device progress strip — bps against run index, per game mode — sits alongside the rankings. Both are the same query over `run`/`result` with different cuts.
 
@@ -351,7 +366,8 @@ Hosting publicly is the **actual** solution to the small-n problem. Requirements
 - Ignore `event.repeat` (held-key autorepeat) — it is not a selection.
 - Ignore bare modifier keys as selections.
 - `preventDefault` on browser shortcuts that would steal keys mid-run.
-- Handle focus loss and tab-visibility change mid-run: mark the run invalid rather than silently scoring a gap. An invalidated run must land on an obvious one-keypress "restart with a fresh seed" affordance — never a dead end. A flustered grader burning goodwill on a confusing error state is a scoring risk.
+- Handle focus loss and tab-visibility change mid-run: mark the run invalid rather than silently scoring a gap. An invalidated run never dead-ends: it drops straight back to practice (no interstitial error screen) with a transient notice explaining why, and Enter re-arms a fresh-seed scored run. A flustered grader burning goodwill on a confusing error state is a scoring risk.
+- Deliberately ending a scored run takes **Esc twice** (the first Esc shows a "press Esc again to end the run" prompt that a subsequent keystroke or 2.5 s withdraws) — one stray Esc must not burn a grader's run.
 - If `run/submit` fails, queue the payload in `localStorage` and retry with backoff. Never lose a completed run to a network hiccup.
 - Use `performance.now()` for all timing, never `Date.now()`.
 - No network calls, no `console.log`, no layout thrash inside the keydown path.
@@ -425,7 +441,7 @@ exec "./$BIN"   # binds 127.0.0.1 on an OS-assigned port, prints the URL, opens 
 - Familiarization mode (free practice on the static ship config — in-game calibration is v2, §2.6), an explicit arming step, then one scored 60-second run.
 - Ship polish outside the keydown path: arming screen, a results-card moment, satisfying peripheral feedback. The brief says *game*; graders are human, and a bare bench test invites a judgment penalty that no bit rate recovers.
 - Belt-and-suspenders: the README links the hosted instance (§6) — if everything local somehow fails, a grader still plays the identical build in a browser tab.
-- Results card reporting **final bps, N, Sc, Si**.
+- Results card reporting **final bps, N, Sc, Si**, plus the §4.3 per-run diagnostics under the headline (computed locally by the ship server; nothing leaves the machine).
 - `README.md` covering: choice of N and why (overlearning vs Hick's law), the N=27 backspace accounting with the brief's reserved-key rationale, input modality and why the keyboard beats the alternatives, presentation rationale (pinned fixation, lookahead, self-paced), the error-policy and correction-strategy argument (miss → backspace → retype), and the negative results from the gallery — the brief says "surprise us," and the gallery of honestly-measured failures is the surprise.
 
 One framing worth including in the README: a healthy person touch-typing lands around 20–40 bits/s, which dwarfs every invasive system in the brief's reference table (best iBCI ~8.6 bps). That contrast is the point — the interface, not the human, is usually the bottleneck, and that is exactly why tapping the channel *before* the motor bottleneck is interesting.

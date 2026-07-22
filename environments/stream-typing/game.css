@@ -1,0 +1,303 @@
+/* stream-typing — pinned fixation, deep lookahead (spec §2.3).
+   System font stack only; no webfont fetch (spec §4.2). */
+
+:root {
+  --bg: #101216;
+  --fg: #d7dae0;
+  --dim: #565c66;
+  --faint: #2a2e36;
+  --ok: #8a9199;
+  --err: #e05252;
+  --err-bg: #3a1d1d;
+  --accent: #e0b452;
+  --live: #58b368;
+  --caret: #7aa2f7;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* The hidden attribute must always win — ID selectors with display rules
+   (e.g. #overlay { display: flex }) would otherwise override the UA's
+   [hidden] { display: none }. */
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  overflow: hidden;
+  user-select: none;
+}
+
+/* ---- stream ---- */
+
+#stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+#stream-viewport {
+  position: relative;
+  width: 100%;
+  height: 8rem;
+  overflow: hidden;
+}
+
+/* Anchor: the pinned fixation point sits at 38% of viewport width.
+   Text flows leftward into it — the eye never moves (spec §2.3). */
+#stream {
+  position: absolute;
+  left: 38%;
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: pre;
+  font-size: 56px;           /* targets at ~3x body size (spec §7) */
+  line-height: 1.4;
+  will-change: transform;
+}
+
+#stream .ch { color: var(--dim); }
+#stream .ch.cur { color: var(--fg); }
+#stream .ch.ok  { color: var(--ok); opacity: .5; }
+#stream .ch.err {
+  color: var(--err);
+  background: var(--err-bg);
+  border-radius: 4px;
+}
+/* Repeated character: subtle marker — repeats must appear, render them
+   countable instead of suppressing them (spec §7). */
+#stream .ch.rpt { text-decoration: underline dotted var(--faint) 2px; text-underline-offset: 10px; }
+#stream .ch.cur.rpt { text-decoration-color: var(--dim); }
+
+#caret {
+  position: absolute;
+  left: 38%;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 4.6rem;
+  border-left: 3px solid var(--caret);
+  margin-left: -6px;
+  opacity: .9;
+}
+
+/* Curtain masks draws beyond the lookahead window; a gradient fades typed
+   history on the left. Zero per-keystroke DOM work. */
+#curtain-right, #fade-left {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+}
+#curtain-right { right: 0; background: var(--bg); }
+#fade-left {
+  left: 0;
+  width: 18%;
+  background: linear-gradient(90deg, var(--bg) 55%, transparent);
+}
+
+#hint {
+  margin-top: 2.5rem;
+  color: var(--dim);
+  font-size: 14px;
+}
+
+/* Transient line under the run content: esc-again prompt, invalidation note. */
+#notice {
+  margin-top: .9rem;
+  font-size: 14px;
+  color: var(--accent);
+}
+#notice.warn { color: var(--err); }
+#notice b { color: inherit; font-weight: bold; }
+
+/* ---- HUD: corner, low contrast, no shimmer (spec §7) ---- */
+
+#hud {
+  position: fixed;
+  top: 14px;
+  right: 18px;
+  text-align: right;
+  color: var(--dim);
+  font-size: 15px;
+  line-height: 1.5;
+  z-index: 5;
+}
+#hud-bps { font-size: 19px; }
+.hud-unit { font-size: 12px; }
+
+/* ---- corner cluster: mode chip + actions ---- */
+
+#corner {
+  position: fixed;
+  top: 14px;
+  left: 18px;
+  z-index: 5;
+}
+#mode-banner {
+  display: inline-block;
+  font-size: 13px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+.mode-practice { color: var(--dim); border: 1px solid var(--faint); }
+/* Practice goes green once the player is actually typing. */
+.mode-practice-live { color: var(--live); border: 1px solid var(--live); }
+.mode-armed    { color: #111; background: var(--accent); }
+.mode-scored   { color: var(--err); border: 1px solid var(--err); }
+.mode-scored::before { content: "● "; }
+
+#mode-help { margin-top: 8px; font-size: 13px; line-height: 1.7; }
+#mode-help .act { color: var(--dim); display: block; }
+#mode-help .act.click { cursor: pointer; }
+#mode-help .act.click:hover { color: var(--fg); }
+#mode-help kbd {
+  color: var(--fg);
+  border: 1px solid var(--faint);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-right: 6px;
+}
+#mode-help .armed-note { color: var(--accent); }
+
+/* Armed: the chip goes amber and so does the caret — enough signal at the
+   fixation point without a shouting border or center banner. */
+body.armed #caret { border-color: var(--accent); }
+
+/* ---- warnings ---- */
+
+#caps-warning, #ime-warning {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--err-bg);
+  color: var(--err);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  z-index: 6;
+}
+
+/* (Note: no opacity/filter on #stage, ever — compositing the curtain and
+   fade overlays through a translucent layer makes their edges visible as
+   seams.) */
+
+/* ---- results view ----
+   Data marks wear the accent hue; all text wears text tokens. Single-series
+   charts: no legend, thin marks, hairline solid grid. */
+
+#results {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4vh 24px 24px;
+}
+
+#res-hero { text-align: center; }
+#res-hero .res-title {
+  color: var(--dim);
+  font-size: 14px;
+  letter-spacing: .15em;
+  text-transform: uppercase;
+}
+#res-hero .res-bps {
+  font-size: 72px;           /* hero figure; same face as everything else */
+  color: var(--fg);
+  line-height: 1.15;
+}
+#res-hero .res-bps span { font-size: 22px; color: var(--dim); }
+#res-hero .res-sub { color: var(--dim); font-size: 16px; margin-top: .3rem; }
+#res-hero .res-sub b { color: var(--fg); font-weight: normal; }
+#res-hero .res-note { color: var(--dim); font-size: 13px; margin-top: .6rem; }
+#res-hero .res-note.warn { color: var(--err); }
+
+#res-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 2rem;
+  max-width: 860px;
+}
+.tile {
+  border: 1px solid var(--faint);
+  border-radius: 8px;
+  padding: 10px 16px;
+  min-width: 118px;
+}
+.tile .t-label { color: var(--dim); font-size: 11px; letter-spacing: .05em; }
+.tile .t-value { color: var(--fg); font-size: 24px; margin-top: 2px; }
+.tile .t-sub { color: var(--dim); font-size: 11px; margin-top: 2px; }
+
+#res-charts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 22px;
+  margin-top: 1.8rem;
+  width: 100%;
+  max-width: 1000px;
+}
+#res-charts figure { flex: 1 1 380px; max-width: 500px; }
+#res-charts figcaption {
+  color: var(--dim);
+  font-size: 12px;
+  letter-spacing: .05em;
+  margin-bottom: 6px;
+}
+#res-charts .err-key { color: var(--err); float: right; }
+#res-charts svg { width: 100%; height: auto; display: block; }
+#res-charts .grid { stroke: var(--faint); stroke-width: 1; }
+#res-charts .axis-label { fill: var(--dim); font-size: 10px; font-family: var(--mono); }
+#res-charts .data-line { stroke: var(--caret); stroke-width: 2; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+#res-charts .data-wash { fill: var(--caret); opacity: .1; }
+#res-charts .data-dot { fill: var(--caret); stroke: var(--bg); stroke-width: 2; }
+#res-charts .data-bar { fill: var(--caret); }
+#res-charts .err-tick { fill: var(--err); }
+#res-charts .marker-line { stroke: var(--dim); stroke-width: 1; }
+
+#res-footer { color: var(--dim); font-size: 13px; margin-top: 2rem; }
+#res-footer b { color: var(--fg); font-weight: normal; }
+
+/* ---- results card / overlays ---- */
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 14, .88);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 10;
+}
+#card {
+  text-align: center;
+  padding: 3rem 4rem;
+  border: 1px solid var(--faint);
+  border-radius: 12px;
+  background: var(--bg);
+}
+#card .big {
+  font-size: 64px;
+  color: var(--fg);
+}
+#card .big .hud-unit { font-size: 20px; color: var(--dim); }
+#card .row { color: var(--dim); margin-top: 1rem; font-size: 16px; }
+#card .row b { color: var(--fg); font-weight: normal; }
+#card .note { color: var(--dim); margin-top: 1.4rem; font-size: 13px; }
+#card .warn { color: var(--err); margin-top: 1rem; font-size: 14px; }
+#card .title { color: var(--dim); font-size: 14px; letter-spacing: .15em; text-transform: uppercase; margin-bottom: 1rem; }

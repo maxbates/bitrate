@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Local pre-push hook (spec §8): a commit that reddens the gate does not
+# land. Install with:  bash scripts/install-hooks.sh
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-push: go vet + tests"
+go vet ./...
+go test ./...
+
+# Full ship gate (build + unzip + headless scored run, ~2 min). Skip with
+# SKIP_GATE=1 when iterating on something unrelated — CI still enforces it.
+if [[ "${SKIP_GATE:-}" != "1" ]]; then
+  echo "pre-push: ship gate (SKIP_GATE=1 to skip locally)"
+  (cd lab && .venv/bin/python ship_gate.py)
+fi

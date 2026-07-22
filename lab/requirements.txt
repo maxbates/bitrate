@@ -1,0 +1,2 @@
+# Tier B only — never shipped (spec §4.1).
+playwright>=1.44
