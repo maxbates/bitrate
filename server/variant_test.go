@@ -32,6 +32,11 @@ func TestParseConfig(t *testing.T) {
 	if cfg.DurationS != 60 {
 		t.Fatalf("duration = %v", cfg.DurationS)
 	}
+	withChunk := defaultConfig()
+	withChunk["chunk_size"] = float64(5)
+	if _, err := ParseConfig(withChunk); err != nil {
+		t.Fatalf("chunk_size 5 rejected: %v", err)
+	}
 }
 
 // Content addressing (spec §4.4): same config -> same hash regardless of
@@ -73,6 +78,8 @@ func TestParseConfigRejects(t *testing.T) {
 		func(m map[string]any) { delete(m, "environment") },
 		func(m map[string]any) { m["duration_s"] = float64(0) },
 		func(m map[string]any) { m["alphabet"] = "ab"; m["backspace"] = false }, // N=2 < 3
+		func(m map[string]any) { m["chunk_size"] = float64(1) },                 // chunking needs >= 2
+		func(m map[string]any) { m["chunk_size"] = "5" },                        // must be a number
 	}
 	for i, mutate := range bad {
 		m := defaultConfig()

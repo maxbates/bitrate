@@ -8,9 +8,13 @@
  * No network calls, no console.log, no layout reads inside keydown.
  */
 
-// ---- config (static ship config; calibration is v2 — spec §2.6) ----
+// ---- config ----
+// The default is the ship config (static; calibration is v2 — spec §2.6).
+// The settings sheet edits the exposed knobs; every distinct config is
+// content-addressed server-side, so tweaks mint/reuse variants for free
+// (spec §9 step 5).
 
-const CONFIG = {
+const DEFAULTS = {
   environment: 'stream-typing',
   alphabet: 'abcdefghijklmnopqrstuvwxyz',
   lookahead: 8,
@@ -23,18 +27,45 @@ const CONFIG = {
   hud_position: 'corner',
   font_stack: 'system-mono',
 };
+const SETTINGS_KEY = 'bitrate_settings_v1';
+const TUNABLE = ['alphabet', 'lookahead', 'chunk_size', 'audio_feedback'];
 
-const N = CONFIG.alphabet.length + (CONFIG.backspace ? 1 : 0); // 27: backspace counts in N
-const BITS = Math.log2(N - 1);                                 // log2(26) ≈ 4.70
-const ALPHA = new Set(CONFIG.alphabet);
-const DURATION_MS = CONFIG.duration_s * 1000;
+let CONFIG, N, BITS, ALPHA, DURATION_MS, CHUNK;
+
+function setConfig(cfg) {
+  CONFIG = cfg;
+  N = cfg.alphabet.length + (cfg.backspace ? 1 : 0); // backspace counts in N
+  BITS = Math.log2(N - 1);                           // ship: log2(26) ≈ 4.70
+  ALPHA = new Set(cfg.alphabet);
+  DURATION_MS = cfg.duration_s * 1000;
+  CHUNK = cfg.chunk_size || 0;
+}
+
+function loadConfig() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { /* defaults */ }
+  const cfg = { ...DEFAULTS };
+  for (const k of TUNABLE) if (k in saved) cfg[k] = saved[k];
+  setConfig(cfg);
+}
+
+function saveSettings() {
+  const out = {};
+  for (const k of TUNABLE) out[k] = CONFIG[k];
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(out)); } catch { /* fine */ }
+}
+
+// Chunk separators are display-only glyphs, never targets (spec §2.3):
+// seps(p) = separators rendered before sequence position p.
+function seps(p) {
+  return CHUNK ? Math.floor(p / CHUNK) : 0;
+}
 
 // ---- dom ----
 
 const $ = (id) => document.getElementById(id);
 const streamEl = $('stream');
 const caretEl = $('caret');
-const curtainEl = $('curtain-right');
 const viewportEl = $('stream-viewport');
 const hudBps = $('hud-bps');
 const hudTime = $('hud-time');
@@ -78,6 +109,8 @@ let noticeTimer = null;
 
 // ---- run lifecycle ----
 
+let lastConfigHash = '';
+
 async function startRun(scored) {
   state = 'loading';
   const resp = await fetch('/api/run/start', {
@@ -98,6 +131,7 @@ async function startRun(scored) {
   });
   if (!resp.ok) throw new Error('run/start failed: ' + resp.status);
   const data = await resp.json();
+  lastConfigHash = data.config_hash || '';
   run = {
     id: data.run_id,
     seq: data.sequence,
@@ -118,6 +152,7 @@ async function startRun(scored) {
   setState(scored ? 'armed' : 'practice');
   buildStream(run.seq);
   renderHud();
+  if (sheetOpen) syncSheet(); // config hash for the new run just arrived
 }
 
 function setState(next) {
@@ -129,6 +164,9 @@ function setState(next) {
   // The results view carries all the numbers; the peripheral chrome goes.
   $('hud').hidden = next === 'done';
   $('corner').hidden = next === 'done';
+  // Settings only reachable from practice; never mid-run.
+  $('gear').hidden = next !== 'practice';
+  if (next !== 'practice' && sheetOpen) closeSheet();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
     modeBanner.className = 'mode-practice';
@@ -152,12 +190,19 @@ function setState(next) {
 
 function buildStream(seq) {
   streamEl.textContent = '';
-  spans = new Array(seq.length);
+  spans = new Array(seq.length); // letter spans only, indexed by seq position
   const frag = document.createDocumentFragment();
   for (let i = 0; i < seq.length; i++) {
+    if (CHUNK && i > 0 && i % CHUNK === 0) {
+      const sep = document.createElement('span');
+      sep.className = 'ch sep';
+      sep.textContent = ' '; // display-only separator, never a target
+      frag.appendChild(sep);
+    }
     const s = document.createElement('span');
     // Repeats must appear (i.i.d.); mark them subtly instead (spec §7).
-    s.className = 'ch' + (i > 0 && seq[i] === seq[i - 1] ? ' rpt' : '');
+    // Beyond the lookahead window, spans start masked ('far').
+    s.className = baseClassFor(seq, i) + (i > CONFIG.lookahead ? ' far' : '');
     s.textContent = seq[i];
     spans[i] = s;
     frag.appendChild(s);
@@ -172,23 +217,26 @@ function measure() {
   // Layout read outside the keydown path only. The advance width is
   // fractional — offsetLeft rounds to integers and the error accumulates
   // into visible caret drift over a run — so measure with float rects
-  // across many spans and divide.
+  // across many spans and divide by advance units (letters + separators).
   const k = Math.min(spans.length - 1, 200);
+  const units = k + seps(k);
   charW = k > 0
-    ? (spans[k].getBoundingClientRect().left - spans[0].getBoundingClientRect().left) / k
+    ? (spans[k].getBoundingClientRect().left - spans[0].getBoundingClientRect().left) / units
     : 0;
-  const anchorX = viewportEl.clientWidth * 0.38;
-  // Curtain hides draws beyond the lookahead window (current + 8).
-  curtainEl.style.left = anchorX + (CONFIG.lookahead + 1) * charW + 'px';
 }
 
 function moveStream() {
+  const offsetUnits = run.pos + seps(run.pos);
   streamEl.style.transform =
-    'translateY(-50%) translateX(' + -run.pos * charW + 'px)';
+    'translateY(-50%) translateX(' + -offsetUnits * charW + 'px)';
+}
+
+function baseClassFor(seq, i) {
+  return 'ch' + (i > 0 && seq[i] === seq[i - 1] ? ' rpt' : '');
 }
 
 function baseClass(i) {
-  return 'ch' + (i > 0 && run.seq[i] === run.seq[i - 1] ? ' rpt' : '');
+  return baseClassFor(run.seq, i);
 }
 
 window.addEventListener('resize', () => {
@@ -230,6 +278,8 @@ function applySelection(key, ts) {
       run.errs.pop();
       spans[run.pos].className = baseClass(run.pos) + ' cur';
       run.shownAt[run.pos] = t; // re-entered fixation
+      const mask = run.pos + CONFIG.lookahead + 1; // window shrank on the right
+      if (mask < spans.length) spans[mask].classList.add('far');
     } else {
       verdict = false; // nothing behind the cursor to delete
       expected = '';
@@ -246,7 +296,11 @@ function applySelection(key, ts) {
       spans[run.pos].classList.add('cur');
       run.shownAt[run.pos] = t;
     }
+    const reveal = run.pos + CONFIG.lookahead; // window grew on the right
+    if (reveal < spans.length) spans[reveal].classList.remove('far');
   }
+
+  if (!verdict) errorBuzz();
 
   if (verdict) run.sc++;
   else run.si++;
@@ -282,6 +336,12 @@ document.addEventListener('keydown', (e) => {
 
   // Leave browser shortcuts (Cmd/Ctrl/Alt combos) alone.
   if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  // While the settings sheet is open its controls own the keyboard.
+  if (sheetOpen) {
+    if (e.key === 'Escape') { e.preventDefault(); closeSheet(); }
+    return;
+  }
 
   // Overlay states: one-keypress restart affordances (spec §7).
   if (state === 'done' || state === 'error') {
@@ -721,6 +781,98 @@ function showError(err) {
     '<div class="note">is the server still running? press <b>Enter</b> to retry</div>';
 }
 
+// ---- audio feedback (config.audio_feedback): WebAudio only, no files ----
+
+let audioCtx = null;
+
+function errorBuzz() {
+  if (!CONFIG.audio_feedback) return;
+  try {
+    audioCtx = audioCtx || new AudioContext(); // created post-gesture: keydown
+    const t0 = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'square';
+    o.frequency.value = 110;
+    g.gain.setValueAtTime(0.05, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t0);
+    o.stop(t0 + 0.09);
+  } catch { /* audio is never load-bearing */ }
+}
+
+// ---- settings sheet ----
+
+const sheetEl = $('sheet');
+let sheetOpen = false;
+
+function openSheet() {
+  if (state !== 'practice') return;
+  sheetOpen = true;
+  syncSheet();
+  sheetEl.classList.add('open');
+}
+
+function closeSheet() {
+  sheetOpen = false;
+  sheetEl.classList.remove('open');
+}
+
+function syncSheet() {
+  segSync('seg-alphabet', CONFIG.alphabet);
+  segSync('seg-chunk', CONFIG.chunk_size ? String(CONFIG.chunk_size) : '');
+  segSync('seg-audio', CONFIG.audio_feedback ? '1' : '');
+  $('set-lookahead').value = CONFIG.lookahead;
+  $('lookahead-val').textContent = CONFIG.lookahead;
+  $('sheet-info').textContent =
+    'N=' + N + ' · ' + BITS.toFixed(2) + ' bits/selection' +
+    (lastConfigHash ? ' · config ' + lastConfigHash.slice(0, 8) : '') +
+    ' · changes restart the practice bout';
+}
+
+function segSync(id, val) {
+  for (const b of $(id).querySelectorAll('button')) {
+    b.classList.toggle('on', b.dataset.v === val);
+  }
+}
+
+// Live reconfiguration (spec §9 step 5): apply -> persist -> fresh practice
+// bout under the new config. The server content-addresses it into the
+// variant registry on run/start.
+function applyChange(mutate) {
+  const cfg = { ...CONFIG };
+  mutate(cfg);
+  setConfig(cfg);
+  saveSettings();
+  syncSheet();
+  toPractice();
+}
+
+function segWire(id, mutate) {
+  $(id).addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    b.blur();
+    applyChange((c) => mutate(c, b.dataset.v));
+  });
+}
+
+segWire('seg-alphabet', (c, v) => { c.alphabet = v; });
+segWire('seg-chunk', (c, v) => { c.chunk_size = v ? Number(v) : null; });
+segWire('seg-audio', (c, v) => { c.audio_feedback = !!v; });
+$('set-lookahead').addEventListener('input', (e) => {
+  $('lookahead-val').textContent = e.target.value;
+});
+$('set-lookahead').addEventListener('change', (e) => {
+  e.target.blur();
+  applyChange((c) => { c.lookahead = Number(e.target.value); });
+});
+$('gear').addEventListener('click', (e) => {
+  e.currentTarget.blur();
+  sheetOpen ? closeSheet() : openSheet();
+});
+
 // ---- corner actions (click = same as the hotkey) ----
 
 modeHelp.addEventListener('click', (e) => {
@@ -732,5 +884,6 @@ modeHelp.addEventListener('click', (e) => {
 
 // ---- boot: straight into practice; flush any stranded submissions ----
 
+loadConfig();
 scheduleFlush(1500);
 startRun(false).catch(showError);

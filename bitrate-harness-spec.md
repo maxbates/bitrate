@@ -92,6 +92,8 @@ Word-level targets are banned by rule 1 regardless — and would not help anyway
 
 Lookahead also **immunizes against display latency**: with a full buffer the player is never waiting on a render, because they already know the next several characters. This is what makes a web app viable.
 
+**Chunking (config `chunk_size`, off or 3–8).** Optionally render the stream in fixed-size groups with a display-only separator space between them. The separator is **never a target** — a deterministic space would carry zero information while costing a keystroke, and it isn't sampled, so making it typeable would corrupt both the score and rule 1. Scoring and the sequence are untouched; chunking is pure presentation, so each chunk size is just another content-addressed variant. Hypothesis for: groups aid parsing the way phone-number grouping does, and chunk boundaries make repeat-runs easier to count. Hypothesis against: separators cost horizontal travel (more units scrolled per character) and the group boundary may induce a pause. Expect a small effect either way; measure, don't assume.
+
 **Self-paced.** The stream advances on keypress, never on a clock. Any rhythm or timing window caps throughput below the player's maximum. No beat, no scroll speed, no timing gate.
 
 **Stimulus-response compatibility.** The stimulus *is* the response: show the letter, press that letter. Zero translation. This is why colors, shapes, and abstract symbol sets lose — "purple → press F" injects a learned lookup between perception and action, adding latency and errors on every trial.

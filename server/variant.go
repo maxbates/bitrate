@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // Config is the parsed, validated subset of a variant config that the
@@ -60,6 +61,14 @@ func ParseConfig(raw map[string]any) (*Config, error) {
 	duration, _ := raw["duration_s"].(float64)
 	if duration <= 0 {
 		return nil, errors.New("config.duration_s must be > 0")
+	}
+	// chunk_size: visual grouping only (a separator glyph, never a target —
+	// spec §2.3); null disables it.
+	if cs, ok := raw["chunk_size"]; ok && cs != nil {
+		f, isNum := cs.(float64)
+		if !isNum || f != math.Trunc(f) || f < 2 || f > 16 {
+			return nil, errors.New("config.chunk_size must be null or an integer 2..16")
+		}
 	}
 	cfg := &Config{
 		Environment: env,

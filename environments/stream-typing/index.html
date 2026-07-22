@@ -29,7 +29,6 @@
     <div id="stream-viewport">
       <div id="caret"></div>
       <div id="stream"></div>
-      <div id="curtain-right"></div>
       <div id="fade-left"></div>
     </div>
     <div id="hint">type the letter at the caret · miss → backspace → retype</div>
@@ -55,9 +54,49 @@
     <div id="res-footer">press <b>Enter</b> for a new scored run · <b>Esc</b> for practice</div>
   </section>
 
-  <!-- Overlay card: invalidation and error states only. -->
+  <!-- Overlay card: error states only. -->
   <div id="overlay" hidden>
     <div id="card"></div>
+  </div>
+
+  <!-- Settings: behind a gear, out of the fixation path (spec §9 step 5).
+       Every change restarts the practice bout under a new content-addressed
+       config; scored runs report whatever config is active. -->
+  <button id="gear" title="settings">⚙ settings</button>
+  <div id="sheet">
+    <div class="sh-row">
+      <span class="sh-label">alphabet</span>
+      <div class="seg" id="seg-alphabet">
+        <button data-v="abcdefghijklmnopqrstuvwxyz">a–z</button>
+        <button data-v="abcdefghijklmnopqrstuvwxyz0123456789">a–z 0–9</button>
+        <button data-v="asdfghjkl">home row</button>
+      </div>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">lookahead</span>
+      <input type="range" id="set-lookahead" min="1" max="16" step="1">
+      <span id="lookahead-val" class="sh-val"></span>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">chunking</span>
+      <div class="seg" id="seg-chunk">
+        <button data-v="">off</button>
+        <button data-v="3">3</button>
+        <button data-v="4">4</button>
+        <button data-v="5">5</button>
+        <button data-v="6">6</button>
+        <button data-v="7">7</button>
+        <button data-v="8">8</button>
+      </div>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">error sound</span>
+      <div class="seg" id="seg-audio">
+        <button data-v="">off</button>
+        <button data-v="1">on</button>
+      </div>
+    </div>
+    <div class="sh-foot" id="sheet-info"></div>
   </div>
 
 <script src="game.js"></script>
