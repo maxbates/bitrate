@@ -21,6 +21,11 @@ const ENV_META = {
     desc: 'a target lights up on a huge grid; find it, loupe it, click it — Fitts’s law says the pointer loses',
     href: 'pixel-lens/',
   },
+  'voice-babble': {
+    name: 'voice-babble',
+    desc: 'say the sounds — recognized on-device from your own calibrated voice; latency is the enemy',
+    href: 'voice-babble/',
+  },
 };
 
 const DEVICE_ID = localStorage.getItem('bitrate_device_id') || '';
@@ -94,6 +99,9 @@ function configSummary(variantId) {
   if (v.environment === 'pixel-lens') {
     return c.cell_mm + ' mm · ' + c.grid_cols + '×' + c.grid_rows;
   }
+  if (v.environment === 'voice-babble') {
+    return (c.symbol_set || '') + ' · N=' + c.alphabet_size;
+  }
   return variantId.slice(0, 8);
 }
 
@@ -135,6 +143,7 @@ function stat(v, l) {
 function bitsLabel(env) {
   if (env === 'stream-typing') return 'N=27 · 4.70 bits/sel';
   if (env === 'pixel-lens') return 'N = your viewport';
+  if (env === 'voice-babble') return 'N=6–26 · your voice';
   return '';
 }
 

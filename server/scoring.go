@@ -38,6 +38,7 @@ type Selection struct {
 	TKeyupMs   *float64 `json:"t_keyup_ms"`   // best-effort; feeds §6 bot heuristics
 	X          *float64 `json:"x,omitempty"`  // pointer environments only
 	Y          *float64 `json:"y,omitempty"`
+	Conf       *float64 `json:"conf,omitempty"` // recognizer margin (§5: recognition-driven modes log confidence)
 }
 
 // Replay walks a selection log against the served symbol sequence and
