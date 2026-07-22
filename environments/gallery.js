@@ -50,6 +50,7 @@ async function boot() {
   DATA.rows = DATA.rows || [];
   DATA.history = DATA.history || [];
   DATA.variants = DATA.variants || [];
+  DATA.dom = bpsDomain(DATA);
   renderTiles(DATA);
   renderProgress(DATA);
   renderTabs();
@@ -57,6 +58,21 @@ async function boot() {
 }
 
 // ---- helpers ----
+
+// Shared log-scale bps axis (all progress strips and sparklines use the
+// same domain — cross-environment comparison is the whole point).
+function bpsDomain(data) {
+  const vals = data.history.filter((h) => h.bps > 0).map((h) => h.bps);
+  const lo = Math.max(0.3, Math.min(1, ...vals) * 0.8);
+  const hi = Math.max(2, ...vals) * 1.15;
+  const ticks = [0.5, 1, 2, 5, 10, 20, 50, 100].filter((t) => t >= lo && t <= hi);
+  return { lo, hi, ticks };
+}
+
+function yLog(v, lo, hi, top, height) {
+  const c = Math.max(v, lo);
+  return top + height - ((Math.log(c) - Math.log(lo)) / (Math.log(hi) - Math.log(lo))) * height;
+}
 
 function median(xs) {
   if (!xs.length) return null;
@@ -149,9 +165,9 @@ function bitsLabel(env) {
 
 function sparkSVG(vals) {
   const W = 120, H = 34, n = vals.length;
-  const max = Math.max(...vals, 1);
+  const { lo, hi } = DATA.dom; // shared log axis across every tile
   const pts = vals.map((v, i) =>
-    (n > 1 ? (i / (n - 1)) * (W - 8) + 4 : W / 2) + ',' + (H - 4 - (v / max) * (H - 10)));
+    (n > 1 ? (i / (n - 1)) * (W - 8) + 4 : W / 2) + ',' + yLog(v, lo, hi, 4, H - 10));
   return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '">' +
     '<polyline class="data-line" points="' + pts.join(' ') + '"/>' +
     '<circle class="data-dot" cx="' + pts[pts.length - 1].split(',')[0] +
@@ -172,7 +188,7 @@ function renderProgress(data) {
     if (runs.length < 2) continue;
     const fig = document.createElement('figure');
     fig.innerHTML =
-      '<figcaption>' + env + ' · ' + runs.length + ' runs (● scored · ○ practice)</figcaption>' +
+      '<figcaption>' + env + ' · ' + runs.length + ' runs · bits/s, log scale (● scored · ○ practice)</figcaption>' +
       progressSVG(runs);
     wrap.appendChild(fig);
   }
@@ -181,12 +197,11 @@ function renderProgress(data) {
 function progressSVG(runs) {
   const W = 480, H = 150, PL = 36, PR = 10, PT = 10, PB = 24;
   const plotW = W - PL - PR, plotH = H - PT - PB;
-  const max = Math.max(...runs.map((r) => r.bps), 1);
+  const { lo, hi, ticks } = DATA.dom; // shared across every environment strip
   const x = (i) => PL + (runs.length > 1 ? (i / (runs.length - 1)) * plotW : plotW / 2);
-  const y = (v) => PT + plotH - (v / max) * plotH;
+  const y = (v) => yLog(v, lo, hi, PT, plotH);
   let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img">';
-  const step = max <= 5 ? 1 : max <= 12 ? 2 : max <= 25 ? 5 : 10;
-  for (let v = 0; v <= max; v += step) {
+  for (const v of ticks) {
     s += '<line class="grid" x1="' + PL + '" x2="' + (W - PR) + '" y1="' + y(v) + '" y2="' + y(v) + '"/>';
     s += '<text class="axis-label" x="' + (PL - 6) + '" y="' + (y(v) + 3) + '" text-anchor="end">' + v + '</text>';
   }
