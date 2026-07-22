@@ -83,6 +83,7 @@ function buildConfig() {
     symbols: SET.symbols,
     display: effectiveDisplay(),
     recognizer: 'dsp-cosine-v2',
+    segmentation: 'dip-v1',
     vad_sensitivity: sensName,
     error_policy: 'advance',
     backspace: false,
@@ -279,17 +280,29 @@ const seg = {
   refractory: 0,
   classified: false,
   noiseFloor: 0.003,
-  peak: 0, // decaying peak, for the mic debug readout
+  peak: 0,    // decaying peak, for the mic debug readout
+  runMax: 0,  // energy peak within the current syllable
+  dip: false, // inside a dip candidate (possible syllable boundary)
+  dipMin: 0,
 };
 
 const CLASSIFY_FRAMES = 7;  // ~115 ms at 60 fps — quick utterances are fine
 const MIN_FRAMES = 3;       // ~50 ms floor: a crisp "ti" still counts
 const END_QUIET_FRAMES = 5; // ~83 ms of quiet ends the utterance
 const REFRACTORY_FRAMES = 3; // ~50 ms before the next can start
+// Rapid speech never goes quiet between syllables — it dips. A drop below
+// DIP_RATIO of the syllable's peak followed by a rise re-opens a new
+// utterance immediately (no refractory): boundaries index on volume dips.
+const DIP_RATIO = 0.5;
+const RISE_RATIO = 2.1;
 
 function frameLoop() {
   if (!micOK) return;
-  const f = readFrame();
+  processFrame(readFrame());
+  requestAnimationFrame(frameLoop);
+}
+
+function processFrame(f) {
   updateLevel(f.rms);
 
   const sens = SENS[sensName] || SENS.high;
@@ -301,34 +314,65 @@ function frameLoop() {
   if (!seg.active) {
     if (seg.refractory > 0) seg.refractory--;
     else if (f.rms > onsetThresh) {
-      seg.active = true;
-      seg.frames = [f];
-      seg.onsetT = f.t;
-      seg.quietFrames = 0;
-      seg.classified = false;
+      startSyllable(f);
     } else {
       seg.noiseFloor = seg.noiseFloor * 0.98 + f.rms * 0.02;
     }
-  } else {
-    seg.frames.push(f);
-    if (f.rms < endThresh) seg.quietFrames++;
-    else seg.quietFrames = 0;
+    return;
+  }
 
-    // Early classification: steady-state sounds don't need the whole
-    // utterance — this is where the latency win comes from.
-    if (!seg.classified && seg.frames.length >= CLASSIFY_FRAMES) {
-      seg.classified = true;
-      emitUtterance();
-    }
-    if (seg.quietFrames >= END_QUIET_FRAMES) {
-      if (!seg.classified && seg.frames.length - seg.quietFrames >= MIN_FRAMES) {
+  seg.frames.push(f);
+  if (f.rms > seg.runMax) seg.runMax = f.rms;
+  if (f.rms < endThresh) seg.quietFrames++;
+  else seg.quietFrames = 0;
+
+  // Early classification: steady-state sounds don't need the whole
+  // utterance — this is where the latency win comes from.
+  if (!seg.classified && seg.frames.length >= CLASSIFY_FRAMES) {
+    seg.classified = true;
+    emitUtterance();
+  }
+
+  // Dip boundary: energy fell well off the syllable peak and is rising
+  // again — rapid speech, next syllable starting. No refractory.
+  if (!seg.dip && seg.frames.length >= MIN_FRAMES && f.rms < seg.runMax * DIP_RATIO) {
+    seg.dip = true;
+    seg.dipMin = f.rms;
+  }
+  if (seg.dip) {
+    if (f.rms < seg.dipMin) seg.dipMin = f.rms;
+    if (f.rms > Math.max(seg.dipMin * RISE_RATIO, onsetThresh)) {
+      if (!seg.classified && seg.frames.length >= MIN_FRAMES) {
         seg.classified = true;
         emitUtterance();
       }
-      finishUtterance(f.t);
+      if (run && run.started && run.keylog.length) {
+        const last = run.keylog[run.keylog.length - 1];
+        if (last.t_keyup_ms === null) last.t_keyup_ms = f.t - run.t0;
+      }
+      startSyllable(f); // the rise is the next syllable's onset
+      return;
     }
   }
-  requestAnimationFrame(frameLoop);
+
+  if (seg.quietFrames >= END_QUIET_FRAMES) {
+    if (!seg.classified && seg.frames.length - seg.quietFrames >= MIN_FRAMES) {
+      seg.classified = true;
+      emitUtterance();
+    }
+    finishUtterance(f.t);
+  }
+}
+
+function startSyllable(f) {
+  seg.active = true;
+  seg.frames = [f];
+  seg.onsetT = f.t;
+  seg.quietFrames = 0;
+  seg.classified = false;
+  seg.runMax = f.rms;
+  seg.dip = false;
+  seg.dipMin = 0;
 }
 
 function emitUtterance() {
@@ -346,6 +390,8 @@ function emitUtterance() {
 function finishUtterance(t) {
   seg.active = false;
   seg.refractory = REFRACTORY_FRAMES;
+  seg.dip = false;
+  seg.runMax = 0;
   // keyup analog: utterance end timestamp onto the last logged selection.
   if (run && run.started && run.keylog.length) {
     const last = run.keylog[run.keylog.length - 1];
@@ -994,6 +1040,7 @@ window.voiceDebug = {
     return c.symbol;
   },
   classify,
+  processFrame,
   state: () => state,
 };
 
