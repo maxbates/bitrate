@@ -760,7 +760,24 @@ function showError(err) {
 
 // ---- boot ----
 
+// Leaderboard relaunch (spec §4.4): ?cfg=<config_hash> applies that
+// variant's cell size for the session; N still derives from this viewport.
+async function applyCfgParam() {
+  const h = new URLSearchParams(location.search).get('cfg');
+  if (!h) return;
+  try {
+    const data = await (await fetch('/api/variants')).json();
+    const v = (data.variants || []).find((x) => x.config_hash === h);
+    if (!v || v.environment !== 'pixel-lens') return;
+    const c = typeof v.config === 'string' ? JSON.parse(v.config) : v.config;
+    if (typeof c.cell_mm === 'number' && c.cell_mm >= 2 && c.cell_mm <= 15) {
+      cellMm = c.cell_mm;
+      buildConfig();
+    }
+  } catch { /* ship build or unknown hash: defaults */ }
+}
+
 loadSettings();
 buildConfig();
 scheduleFlush(1500);
-startRun(false).catch(showError);
+applyCfgParam().then(() => startRun(false)).catch(showError);

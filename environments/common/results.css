@@ -66,14 +66,16 @@
 }
 #res-charts .err-key { color: var(--err); float: right; }
 #res-charts svg { width: 100%; height: auto; display: block; }
-#res-charts .grid { stroke: var(--faint); stroke-width: 1; }
-#res-charts .axis-label { fill: var(--dim); font-size: 10px; font-family: var(--mono); }
-#res-charts .data-line { stroke: var(--caret); stroke-width: 2; fill: none; stroke-linejoin: round; stroke-linecap: round; }
-#res-charts .data-wash { fill: var(--caret); opacity: .1; }
-#res-charts .data-dot { fill: var(--caret); stroke: var(--bg); stroke-width: 2; }
-#res-charts .data-bar { fill: var(--caret); }
-#res-charts .err-tick { fill: var(--err); }
-#res-charts .marker-line { stroke: var(--dim); stroke-width: 1; }
+/* Chart mark classes are global: the results view, the leaderboard detail
+   rows, and the gallery sparklines/progress strips all draw with them. */
+svg .grid { stroke: var(--faint); stroke-width: 1; }
+svg .axis-label { fill: var(--dim); font-size: 10px; font-family: var(--mono); }
+svg .data-line { stroke: var(--caret); stroke-width: 2; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+svg .data-wash { fill: var(--caret); opacity: .1; }
+svg .data-dot { fill: var(--caret); stroke: var(--bg); stroke-width: 2; }
+svg .data-bar { fill: var(--caret); }
+svg .err-tick { fill: var(--err); }
+svg .marker-line { stroke: var(--dim); stroke-width: 1; }
 
 #res-footer { color: var(--dim); font-size: 13px; margin-top: 2rem; }
 #res-footer b { color: var(--fg); font-weight: normal; }

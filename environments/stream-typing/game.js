@@ -780,6 +780,22 @@ modeHelp.addEventListener('click', (e) => {
 
 // ---- boot: straight into practice; flush any stranded submissions ----
 
+// Leaderboard relaunch (spec §4.4): ?cfg=<config_hash> boots this exact
+// variant for the session (not persisted — your saved settings stay yours).
+async function applyCfgParam() {
+  const h = new URLSearchParams(location.search).get('cfg');
+  if (!h) return;
+  try {
+    const data = await (await fetch('/api/variants')).json();
+    const v = (data.variants || []).find((x) => x.config_hash === h);
+    if (!v || v.environment !== CONFIG.environment) return;
+    const c = typeof v.config === 'string' ? JSON.parse(v.config) : v.config;
+    const cfg = { ...DEFAULTS };
+    for (const k of TUNABLE) if (k in c) cfg[k] = c[k];
+    setConfig(cfg);
+  } catch { /* ship build or unknown hash: defaults */ }
+}
+
 loadConfig();
 scheduleFlush(1500);
-startRun(false).catch(showError);
+applyCfgParam().then(() => startRun(false)).catch(showError);
