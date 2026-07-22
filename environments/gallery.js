@@ -26,19 +26,12 @@ const ENV_META = {
     desc: 'say the sounds — recognized on-device from your own calibrated voice; latency is the enemy',
     href: 'voice-babble/',
   },
-  'word-typing': {
-    name: 'word-typing',
-    desc: 'type i.i.d. words from a fixed list — tests the §2.2 wash prediction',
-    href: 'word-typing/',
-    offBrief: 'word-level targets are banned by the brief (rule 1)',
-  },
-  'speech-words': {
-    name: 'speech-words',
-    desc: 'speak i.i.d. words — big alphabet, one utterance per selection',
-    href: 'speech-words/',
-    offBrief: 'word-level targets + an LM decoder — both banned by the brief',
-  },
 };
+
+// Off-brief environments hidden from the app (code kept on disk for
+// word-typing; speech-words deleted — ASR finals latency made it moot).
+// Their historical variants/runs are filtered out of every view.
+const HIDDEN_ENVS = new Set(['word-typing', 'speech-words']);
 
 const DEVICE_ID = localStorage.getItem('bitrate_device_id') || '';
 
@@ -62,6 +55,8 @@ async function boot() {
   DATA.rows = DATA.rows || [];
   DATA.history = DATA.history || [];
   DATA.variants = DATA.variants || [];
+  DATA.history = DATA.history.filter((h) => !HIDDEN_ENVS.has(h.environment));
+  DATA.rows = DATA.rows.filter((r) => !HIDDEN_ENVS.has(r.environment));
   DATA.dom = bpsDomain(DATA);
   renderTiles(DATA);
   renderProgress(DATA);
@@ -100,7 +95,7 @@ function envOf(h) { return h.environment || 'unknown'; }
 function knownEnvs(data) {
   const envs = new Set(Object.keys(ENV_META));
   for (const v of data ? data.variants : []) envs.add(v.environment);
-  return [...envs];
+  return [...envs].filter((e) => !HIDDEN_ENVS.has(e));
 }
 
 function agoFmt(iso) {
@@ -131,12 +126,6 @@ function configSummary(variantId) {
   }
   if (v.environment === 'voice-babble') {
     return (c.symbol_set || '') + ' · N=' + c.alphabet_size;
-  }
-  if (v.environment === 'word-typing') {
-    return '≤' + c.word_max_len + ' letters · N=' + c.alphabet_size;
-  }
-  if (v.environment === 'speech-words') {
-    return (c.wordlist || '') + ' · N=' + c.alphabet_size;
   }
   return variantId.slice(0, 8);
 }
@@ -183,8 +172,6 @@ function bitsLabel(env) {
   if (env === 'stream-typing') return 'N=27 · 4.70 bits/sel';
   if (env === 'pixel-lens') return 'N = your viewport';
   if (env === 'voice-babble') return 'N=6–26 · your voice';
-  if (env === 'word-typing') return 'N≈1–1.9k words · 10+ bits/sel';
-  if (env === 'speech-words') return 'N≤1.7k words · 10+ bits/sel';
   return '';
 }
 

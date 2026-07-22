@@ -33,7 +33,7 @@ const SETS = {
   'solfege': {
     label: 'do–ti',
     symbols: ['do', 're', 'mi', 'fa', 'sol', 'la', 'ti'],
-    note: 'same-vowel pairs (do/sol, fa/la, mi/ti) ride on the onset consonant — attack them crisply',
+    note: 'syllables, not words (§1 register) — same-vowel pairs ride on the onset consonant, attack them crisply',
   },
   'letters-9': {
     label: 'letters 9',
