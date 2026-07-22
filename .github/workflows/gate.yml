@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+          cache: false # stdlib-only module: no go.sum to key a cache on
       - run: go vet ./...
       - run: go vet -tags ship ./...
       - run: go test ./...
@@ -24,6 +25,7 @@ jobs:
   ship-gate:
     name: ship gate (${{ matrix.runner }})
     strategy:
+      fail-fast: false # arm and x86 legs are independent evidence
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
@@ -32,12 +34,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+          cache: false # stdlib-only module: no go.sum to key a cache on
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r lab/requirements.txt
       - run: python -m playwright install --with-deps chromium
-      - run: python lab/ship_gate.py
+      - run: python ship_gate.py
         working-directory: lab
 
   # Minimal-container leg: no glibc, no xdg-open, network disabled — proves
@@ -51,6 +54,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+          cache: false # stdlib-only module: no go.sum to key a cache on
       - run: ./build.sh
       - run: |
           unzip -q dist/bitrate.zip -d dist/gate-container
@@ -82,10 +86,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+          cache: false # stdlib-only module: no go.sum to key a cache on
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -r lab/requirements.txt
       - run: python -m playwright install chromium
-      - run: python lab/ship_gate.py
+      - run: python ship_gate.py
         working-directory: lab
