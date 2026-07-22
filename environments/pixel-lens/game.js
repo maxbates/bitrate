@@ -18,13 +18,17 @@
 
 const PX_PER_MM = 96 / 25.4; // CSS reference pixel
 const ZOOM_TARGET_MM = 25;   // apparent cell size at the lens center (~2.5 cm)
-const LOUPE_R = 110;         // lens radius (px)
-const LENS_RINGS = 22;       // piecewise rings approximating the radial falloff
+let loupeR = 110;            // lens radius (px, settings-driven)
+// Piecewise rings approximating the radial falloff; more rings at higher
+// magnification so the steps stay invisible.
+function lensRings() { return Math.round(16 + lensMag * 5); }
 const ARROW_DIST = 320;      // beyond this, show the direction affordance
 const SETTINGS_KEY = 'bitrate_pixel_settings_v1';
 const DEFAULT_CELL_MM = 5;
 
 let cellMm = DEFAULT_CELL_MM;
+let zoomMode = 'auto'; // 'auto' (25mm apparent) or a fixed multiplier
+
 let CONFIG = null, N = 0, BITS = 0, DURATION_MS = 60000;
 let grid = { cols: 0, rows: 0, cell: 19, w: 0, h: 0 };
 let lensMag = 5; // center magnification; falls off to 1 at the rim
@@ -33,11 +37,24 @@ function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
     if (typeof s.cell_mm === 'number' && s.cell_mm >= 2 && s.cell_mm <= 15) cellMm = s.cell_mm;
+    if (s.zoom === 'auto' || (typeof s.zoom === 'number' && s.zoom >= 2 && s.zoom <= 8)) zoomMode = s.zoom;
+    if (typeof s.lens_r === 'number' && s.lens_r >= 60 && s.lens_r <= 180) loupeR = s.lens_r;
   } catch { /* defaults */ }
 }
 
 function saveSettings() {
-  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ cell_mm: cellMm })); } catch { /* fine */ }
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ cell_mm: cellMm, zoom: zoomMode, lens_r: loupeR }));
+  } catch { /* fine */ }
+}
+
+function applyLoupeSize() {
+  const d = loupeR * 2;
+  loupeEl.style.width = d + 'px';
+  loupeEl.style.height = d + 'px';
+  loupeEl.style.margin = -loupeR + 'px 0 0 ' + -loupeR + 'px';
+  loupeArrow.style.width = d + 'px';
+  loupeArrow.style.marginLeft = -loupeR + 'px';
 }
 
 // ---- dom ----
@@ -88,13 +105,26 @@ let mouse = { x: -1000, y: -1000, inField: false };
 function buildConfig() {
   const cell = Math.max(6, Math.round(cellMm * PX_PER_MM));
   const r = fieldEl.getBoundingClientRect();
-  const cols = Math.max(2, Math.floor(r.width / cell));
-  const rows = Math.max(2, Math.floor(r.height / cell));
-  grid = { cols, rows, cell, w: r.width, h: r.height };
-  document.documentElement.style.setProperty('--cell', cell + 'px');
-  // Center magnification: a cell appears ~ZOOM_TARGET_MM at the lens
-  // center, tapering to 1x at the rim (see drawLoupe).
-  lensMag = Math.min(8, Math.max(2, ZOOM_TARGET_MM / cellMm));
+  // Inset the grid from the field edges so a target near the boundary
+  // never buries more than ~40% of the lens off-screen.
+  const pad = Math.round(loupeR * 0.6);
+  const cols = Math.max(2, Math.floor((r.width - 2 * pad) / cell));
+  const rows = Math.max(2, Math.floor((r.height - 2 * pad) / cell));
+  const ox = Math.round((r.width - cols * cell) / 2);
+  const oy = Math.round((r.height - rows * cell) / 2);
+  grid = { cols, rows, cell, ox, oy, w: r.width, h: r.height };
+  const ga = $('gridarea');
+  ga.style.left = ox + 'px';
+  ga.style.top = oy + 'px';
+  ga.style.width = (cols * cell) + 'px';
+  ga.style.height = (rows * cell) + 'px';
+  ga.style.backgroundSize = cell + 'px ' + cell + 'px';
+  applyLoupeSize();
+  // Center magnification: auto targets ~ZOOM_TARGET_MM apparent size,
+  // tapering to 1x at the rim (see drawLoupe); or a fixed multiplier.
+  lensMag = zoomMode === 'auto'
+    ? Math.min(8, Math.max(2, ZOOM_TARGET_MM / cellMm))
+    : zoomMode;
   N = cols * rows; // no correction key in this environment
   BITS = Math.log2(N - 1);
   CONFIG = {
@@ -104,8 +134,10 @@ function buildConfig() {
     grid_rows: rows,
     cell_px: cell,
     cell_mm: cellMm,
-    loupe_r_px: LOUPE_R,
+    loupe_r_px: loupeR,
     loupe_mag: Math.round(lensMag * 100) / 100,
+    loupe_zoom_mode: String(zoomMode),
+    grid_pad_px: pad,
     viewport_w: Math.round(window.innerWidth),
     viewport_h: Math.round(window.innerHeight),
     pointer: 'mouse',
@@ -198,8 +230,8 @@ function setState(next) {
 
 function cellCenter(idx) {
   return {
-    x: (idx % grid.cols + 0.5) * grid.cell,
-    y: (Math.floor(idx / grid.cols) + 0.5) * grid.cell,
+    x: grid.ox + (idx % grid.cols + 0.5) * grid.cell,
+    y: grid.oy + (Math.floor(idx / grid.cols) + 0.5) * grid.cell,
   };
 }
 
@@ -238,8 +270,8 @@ fieldEl.addEventListener('mousedown', (e) => {
   const r = fieldEl.getBoundingClientRect();
   const x = e.clientX - r.left;
   const y = e.clientY - r.top;
-  const col = Math.min(grid.cols - 1, Math.max(0, Math.floor(x / grid.cell)));
-  const row = Math.min(grid.rows - 1, Math.max(0, Math.floor(y / grid.cell)));
+  const col = Math.min(grid.cols - 1, Math.max(0, Math.floor((x - grid.ox) / grid.cell)));
+  const row = Math.min(grid.rows - 1, Math.max(0, Math.floor((y - grid.oy) / grid.cell)));
   const cell = row * grid.cols + col;
   const expected = run.seq[run.pos];
   const verdict = cell === expected;
@@ -305,7 +337,7 @@ fieldEl.addEventListener('mouseleave', () => {
 // with the field behind it, which is what reads as a curved lens rather
 // than a flat zoom window.
 function magAt(r) {
-  const u = r / LOUPE_R;
+  const u = r / loupeR;
   return 1 + (lensMag - 1) * (1 - u * u);
 }
 
@@ -322,17 +354,19 @@ function drawScene(dpr, side) {
   sctx.fillStyle = '#101216';
   sctx.fillRect(0, 0, side, side);
 
-  // Grid at 1:1: screen x = k*cell maps to k*cell - mouse.x + LOUPE_R.
+  // Grid at 1:1: screen x = k*cell maps to k*cell - mouse.x + loupeR.
   sctx.strokeStyle = '#2a2e36';
   sctx.lineWidth = 1;
   sctx.beginPath();
-  for (let k = Math.floor((mouse.x - LOUPE_R) / grid.cell); k * grid.cell <= mouse.x + LOUPE_R; k++) {
-    const lx = k * grid.cell - mouse.x + LOUPE_R;
+  for (let k = Math.max(0, Math.floor((mouse.x - loupeR - grid.ox) / grid.cell));
+       k <= grid.cols && grid.ox + k * grid.cell <= mouse.x + loupeR; k++) {
+    const lx = grid.ox + k * grid.cell - mouse.x + loupeR;
     sctx.moveTo(lx, 0);
     sctx.lineTo(lx, side);
   }
-  for (let k = Math.floor((mouse.y - LOUPE_R) / grid.cell); k * grid.cell <= mouse.y + LOUPE_R; k++) {
-    const ly = k * grid.cell - mouse.y + LOUPE_R;
+  for (let k = Math.max(0, Math.floor((mouse.y - loupeR - grid.oy) / grid.cell));
+       k <= grid.rows && grid.oy + k * grid.cell <= mouse.y + loupeR; k++) {
+    const ly = grid.oy + k * grid.cell - mouse.y + loupeR;
     sctx.moveTo(0, ly);
     sctx.lineTo(side, ly);
   }
@@ -341,8 +375,8 @@ function drawScene(dpr, side) {
   // Target cell highlight + dot at 1:1.
   if (run && run.pos < run.seq.length && state !== 'done') {
     const c = cellCenter(run.seq[run.pos]);
-    const lx = c.x - mouse.x + LOUPE_R;
-    const ly = c.y - mouse.y + LOUPE_R;
+    const lx = c.x - mouse.x + loupeR;
+    const ly = c.y - mouse.y + loupeR;
     if (lx > -grid.cell && lx < side + grid.cell && ly > -grid.cell && ly < side + grid.cell) {
       const half = grid.cell / 2;
       sctx.fillStyle = 'rgba(224, 180, 82, .16)';
@@ -362,7 +396,7 @@ function drawLoupe() {
   loupeEl.style.transform = 'translate(' + mouse.x + 'px,' + mouse.y + 'px)';
 
   const dpr = window.devicePixelRatio || 1;
-  const side = LOUPE_R * 2;
+  const side = loupeR * 2;
   if (loupeCanvas.width !== side * dpr) {
     loupeCanvas.width = side * dpr;
     loupeCanvas.height = side * dpr;
@@ -375,21 +409,22 @@ function drawLoupe() {
   // approximation of the continuous radial profile.
   lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   lctx.clearRect(0, 0, side, side);
-  for (let i = LENS_RINGS; i >= 1; i--) {
-    const rOuter = (LOUPE_R * i) / LENS_RINGS;
-    const m = magAt(LOUPE_R * (i - 0.5) / LENS_RINGS);
+  const rings = lensRings();
+  for (let i = rings; i >= 1; i--) {
+    const rOuter = (loupeR * i) / rings;
+    const m = magAt(loupeR * (i - 0.5) / rings);
     lctx.save();
     lctx.beginPath();
-    lctx.arc(LOUPE_R, LOUPE_R, rOuter, 0, Math.PI * 2);
+    lctx.arc(loupeR, loupeR, rOuter, 0, Math.PI * 2);
     lctx.clip();
-    lctx.translate(LOUPE_R, LOUPE_R);
+    lctx.translate(loupeR, loupeR);
     lctx.scale(m, m);
-    lctx.drawImage(sceneCanvas, 0, 0, side * dpr, side * dpr, -LOUPE_R, -LOUPE_R, side, side);
+    lctx.drawImage(sceneCanvas, 0, 0, side * dpr, side * dpr, -loupeR, -loupeR, side, side);
     lctx.restore();
   }
 
   // Glass vignette: darkening toward the rim sells the curvature.
-  const vg = lctx.createRadialGradient(LOUPE_R, LOUPE_R, LOUPE_R * 0.55, LOUPE_R, LOUPE_R, LOUPE_R);
+  const vg = lctx.createRadialGradient(loupeR, loupeR, loupeR * 0.55, loupeR, loupeR, loupeR);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
   vg.addColorStop(1, 'rgba(0,0,0,.28)');
   lctx.fillStyle = vg;
@@ -411,13 +446,13 @@ function drawLoupe() {
   // Crosshair: the true click point (drawn undistorted, on top).
   lctx.strokeStyle = '#565c66';
   lctx.beginPath();
-  lctx.moveTo(LOUPE_R - 10, LOUPE_R); lctx.lineTo(LOUPE_R - 4, LOUPE_R);
-  lctx.moveTo(LOUPE_R + 4, LOUPE_R); lctx.lineTo(LOUPE_R + 10, LOUPE_R);
-  lctx.moveTo(LOUPE_R, LOUPE_R - 10); lctx.lineTo(LOUPE_R, LOUPE_R - 4);
-  lctx.moveTo(LOUPE_R, LOUPE_R + 4); lctx.lineTo(LOUPE_R, LOUPE_R + 10);
+  lctx.moveTo(loupeR - 10, loupeR); lctx.lineTo(loupeR - 4, loupeR);
+  lctx.moveTo(loupeR + 4, loupeR); lctx.lineTo(loupeR + 10, loupeR);
+  lctx.moveTo(loupeR, loupeR - 10); lctx.lineTo(loupeR, loupeR - 4);
+  lctx.moveTo(loupeR, loupeR + 4); lctx.lineTo(loupeR, loupeR + 10);
   lctx.stroke();
   lctx.fillStyle = '#7aa2f7';
-  lctx.fillRect(LOUPE_R - 1, LOUPE_R - 1, 2, 2);
+  lctx.fillRect(loupeR - 1, loupeR - 1, 2, 2);
 }
 
 // ---- keyboard: arm / abort / restart ----
@@ -470,9 +505,16 @@ function syncSheet() {
   for (const b of $('seg-cell').querySelectorAll('button')) {
     b.classList.toggle('on', Number(b.dataset.v) === cellMm);
   }
+  for (const b of $('seg-zoom').querySelectorAll('button')) {
+    b.classList.toggle('on', b.dataset.v === String(zoomMode));
+  }
+  for (const b of $('seg-lens').querySelectorAll('button')) {
+    b.classList.toggle('on', Number(b.dataset.v) === loupeR);
+  }
   $('sheet-info').textContent =
     grid.cols + '×' + grid.rows + ' cells · N=' + N + ' · ' + BITS.toFixed(2) +
-    ' bits/selection · ~' + Math.round(cellMm * lensMag) + ' mm in lens · changes restart the bout';
+    ' bits/selection · lens ' + lensMag.toFixed(1) + '× / r' + loupeR +
+    ' · ~' + Math.round(cellMm * lensMag) + ' mm in lens · changes restart the bout';
 }
 
 $('seg-cell').addEventListener('click', (e) => {
@@ -484,6 +526,28 @@ $('seg-cell').addEventListener('click', (e) => {
   buildConfig();
   syncSheet();
   toPractice();
+});
+
+function segApply(mut) {
+  mut();
+  saveSettings();
+  buildConfig();
+  syncSheet();
+  toPractice();
+}
+
+$('seg-zoom').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  segApply(() => { zoomMode = b.dataset.v === 'auto' ? 'auto' : Number(b.dataset.v); });
+});
+
+$('seg-lens').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  segApply(() => { loupeR = Number(b.dataset.v); });
 });
 
 $('gear').addEventListener('click', (e) => {

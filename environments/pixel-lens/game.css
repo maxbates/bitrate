@@ -93,15 +93,21 @@ body {
   top: 78px;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: 54px; /* footer strip: the gear lives there, never over the grid */
   cursor: none; /* the loupe is the cursor */
   overflow: hidden;
-  /* Faint 1-cell lattice so the hitbox scale is legible. */
+  opacity: .999; /* own compositing layer */
+}
+
+/* The playable grid, inset from the field edges (lens never buried more
+   than ~40% at a boundary target). Faint 1-cell lattice for scale. */
+#gridarea {
+  position: absolute;
+  border: 1px solid var(--faint);
   background-image:
     linear-gradient(var(--faint) 1px, transparent 1px),
     linear-gradient(90deg, var(--faint) 1px, transparent 1px);
-  background-size: var(--cell, 38px) var(--cell, 38px);
-  opacity: .999; /* own compositing layer */
+  pointer-events: none;
 }
 body.armed #field { cursor: none; }
 
