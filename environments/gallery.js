@@ -28,13 +28,15 @@ const ENV_META = {
   },
   'word-typing': {
     name: 'word-typing',
-    desc: 'type i.i.d. words from a fixed list — the spec predicts a wash vs letters; measure it',
+    desc: 'type i.i.d. words from a fixed list — tests the §2.2 wash prediction',
     href: 'word-typing/',
+    offBrief: 'word-level targets are banned by the brief (rule 1)',
   },
   'speech-words': {
     name: 'speech-words',
-    desc: 'speak i.i.d. words — one utterance is one selection, so the big alphabet multiplies bits',
+    desc: 'speak i.i.d. words — big alphabet, one utterance per selection',
     href: 'speech-words/',
+    offBrief: 'word-level targets + an LM decoder — both banned by the brief',
   },
 };
 
@@ -153,9 +155,12 @@ function renderTiles(data) {
     const el = document.createElement('div');
     el.className = 'tile-env';
     el.innerHTML =
-      '<div class="t-head"><span class="t-name">' + meta.name + '</span>' +
-      '<span class="t-bits">' + bitsLabel(env) + '</span></div>' +
-      '<div class="t-desc">' + meta.desc + '</div>' +
+      '<div class="t-head"><span class="t-name">' + meta.name +
+      (meta.offBrief ? ' <span class="off-brief" title="' + meta.offBrief + '">off-brief</span>' : '') +
+      '</span><span class="t-bits">' + bitsLabel(env) + '</span></div>' +
+      '<div class="t-desc">' + meta.desc +
+      (meta.offBrief ? ' — <span class="off-brief-note">' + meta.offBrief + '; lab only, never ships</span>' : '') +
+      '</div>' +
       '<div class="t-stats">' +
       stat(scored.length || '—', scored.length === 1 ? 'run' : 'runs') +
       stat(best !== null ? best.toFixed(1) : '—', 'best bps') +
@@ -272,7 +277,8 @@ function renderBoard() {
       '<td class="rank">' + r.rank + '</td>' +
       '<td><span class="player">' + r.pseudonym + '</span>' + you + '</td>' +
       '<td class="bps">' + r.bps.toFixed(2) + '</td>' +
-      '<td>' + envOf(r) + '</td>' +
+      '<td>' + envOf(r) +
+      ((ENV_META[envOf(r)] || {}).offBrief ? ' <span class="off-brief">off-brief</span>' : '') + '</td>' +
       '<td>' + configSummary(r.variant_id) + '</td>' +
       '<td>' + acc + '</td>' +
       '<td>' + agoFmt(r.ended_at) + '</td></tr>';

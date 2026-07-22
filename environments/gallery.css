@@ -163,3 +163,16 @@ table.lb { width: 100%; border-collapse: collapse; }
   padding: 18px 10px;
   line-height: 1.6;
 }
+
+/* Off-brief environments: rule-violating lab toys, quarantined visibly. */
+.off-brief {
+  color: var(--err);
+  border: 1px solid var(--err);
+  border-radius: 3px;
+  font-size: 10px;
+  padding: 0 5px;
+  vertical-align: middle;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.off-brief-note { color: var(--err); opacity: .8; }

@@ -204,3 +204,16 @@ body.armed .chip.cur { border-color: var(--accent); }
 #card .row { color: var(--dim); margin-top: 1rem; font-size: 16px; }
 #card .row b { color: var(--fg); font-weight: normal; }
 #card .note { color: var(--dim); margin-top: 1.4rem; font-size: 13px; }
+
+/* Off-brief quarantine banner (spec §5): this environment violates rule 1
+   and can never ship or grade. */
+.off-brief-banner {
+  margin-top: 10px;
+  max-width: 300px;
+  color: var(--err);
+  font-size: 11px;
+  line-height: 1.5;
+  border-left: 2px solid var(--err);
+  padding-left: 8px;
+  opacity: .85;
+}
