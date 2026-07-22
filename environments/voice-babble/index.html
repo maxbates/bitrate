@@ -36,6 +36,13 @@
   <section id="calib" hidden>
     <div class="c-title">calibrate — your voice, your templates</div>
     <div class="c-sub">say each sound when it appears · everything stays on this machine</div>
+    <div class="seg" id="calib-seg-set">
+      <button data-v="babble-6">babble 6</button>
+      <button data-v="babble-8">babble 8</button>
+      <button data-v="solfege">do–ti</button>
+      <button data-v="letters-9">letters 9</button>
+      <button data-v="letters-26">a–z</button>
+    </div>
     <div id="calib-symbol"></div>
     <div id="calib-progress"></div>
     <div id="calib-level"><span id="calib-level-bar"></span></div>
@@ -82,9 +89,18 @@
       </div>
     </div>
     <div class="sh-row">
+      <span class="sh-label">mic trigger</span>
+      <div class="seg" id="seg-sens">
+        <button data-v="high">sensitive</button>
+        <button data-v="med">medium</button>
+        <button data-v="low">loud room</button>
+      </div>
+    </div>
+    <div class="sh-row">
       <span class="sh-label"></span>
       <span class="act click" id="recalibrate">↻ recalibrate this set</span>
     </div>
+    <div class="sh-foot" id="mic-stats"></div>
     <div class="sh-foot" id="sheet-info"></div>
   </div>
 

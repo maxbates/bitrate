@@ -134,7 +134,7 @@ body.armed .chip.cur { border-color: var(--accent); }
   position: absolute;
   top: -6px;
   bottom: -6px;
-  left: 120px;
+  left: 214px; /* matches NOTE_X0 in game.js */
   border-left: 2px solid var(--caret);
   opacity: .7;
 }

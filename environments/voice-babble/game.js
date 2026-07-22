@@ -49,6 +49,7 @@ const SETS = {
 
 const SET_KEY = 'bitrate_voice_set_v1';
 const DISPLAY_KEY = 'bitrate_voice_display_v1';
+const SENS_KEY = 'bitrate_voice_sens_v1';
 const TEMPLATES_KEY = 'bitrate_voice_templates_v1';
 const MAX_LANES = 9; // beyond this, lanes stop being readable
 
@@ -63,6 +64,8 @@ function loadSettings() {
   if (s && SETS[s]) { setName = s; SET = SETS[s]; }
   const d = localStorage.getItem(DISPLAY_KEY);
   if (d === 'chips' || d === 'lanes') display = d;
+  const v = localStorage.getItem(SENS_KEY);
+  if (v && SENS[v]) sensName = v;
 }
 
 function effectiveDisplay() {
@@ -79,7 +82,8 @@ function buildConfig() {
     symbol_set: setName,
     symbols: SET.symbols,
     display: effectiveDisplay(),
-    recognizer: 'dsp-cosine-v1',
+    recognizer: 'dsp-cosine-v2',
+    vad_sensitivity: sensName,
     error_policy: 'advance',
     backspace: false,
     duration_s: 60,
@@ -94,6 +98,7 @@ function buildConfig() {
 function loadTemplates() {
   try {
     const all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}');
+    if (all.timing !== 2) return null; // recalibrate after VAD/timing changes
     const map = (all.sets && all.sets[setName]) || null;
     if (!map) return null;
     // Stale templates from an older feature-vector shape force recalibration.
@@ -108,6 +113,7 @@ function saveTemplates(map) {
   let all;
   try { all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}'); } catch { all = {}; }
   all.version = 1;
+  all.timing = 2;
   all.sets = all.sets || {};
   all.sets[setName] = map;
   try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(all)); } catch { /* fine */ }
@@ -262,6 +268,9 @@ function classify(vec) {
 
 // ---- VAD / segmenter ----
 
+const SENS = { high: 0.005, med: 0.008, low: 0.013 }; // absolute onset RMS floor
+let sensName = 'high'; // raw mic gain (no AGC) usually runs quiet — default sensitive
+
 const seg = {
   active: false,
   frames: [],
@@ -269,21 +278,25 @@ const seg = {
   quietFrames: 0,
   refractory: 0,
   classified: false,
-  noiseFloor: 0.004,
+  noiseFloor: 0.003,
+  peak: 0, // decaying peak, for the mic debug readout
 };
 
-const CLASSIFY_FRAMES = 11; // ~180 ms at 60 fps
-const MIN_FRAMES = 5;
-const END_QUIET_FRAMES = 9;
-const REFRACTORY_FRAMES = 6;
+const CLASSIFY_FRAMES = 7;  // ~115 ms at 60 fps — quick utterances are fine
+const MIN_FRAMES = 3;       // ~50 ms floor: a crisp "ti" still counts
+const END_QUIET_FRAMES = 5; // ~83 ms of quiet ends the utterance
+const REFRACTORY_FRAMES = 3; // ~50 ms before the next can start
 
 function frameLoop() {
   if (!micOK) return;
   const f = readFrame();
   updateLevel(f.rms);
 
-  const onsetThresh = Math.max(seg.noiseFloor * 5, 0.010);
-  const endThresh = Math.max(seg.noiseFloor * 2.5, 0.006);
+  const sens = SENS[sensName] || SENS.high;
+  const onsetThresh = Math.max(seg.noiseFloor * 4, sens);
+  const endThresh = Math.max(seg.noiseFloor * 2, sens * 0.55);
+  if (f.rms > seg.peak) seg.peak = f.rms;
+  seg.peak *= 0.995;
 
   if (!seg.active) {
     if (seg.refractory > 0) seg.refractory--;
@@ -341,7 +354,7 @@ function finishUtterance(t) {
 }
 
 function updateLevel(rms) {
-  const pct = Math.min(100, Math.round((rms / 0.12) * 100));
+  const pct = Math.min(100, Math.round((rms / 0.06) * 100));
   document.documentElement.style.setProperty('--level', pct + '%');
   const bar = $('calib-level-bar');
   if (state === 'calib' && bar) bar.style.width = pct + '%';
@@ -359,6 +372,9 @@ function startCalibration() {
 }
 
 function renderCalib() {
+  for (const b of $('calib-seg-set').querySelectorAll('button')) {
+    b.classList.toggle('on', b.dataset.v === setName);
+  }
   const sym = SET.symbols[calib.idx];
   $('calib-symbol').textContent = sym;
   $('calib-symbol').classList.remove('captured');
@@ -498,7 +514,7 @@ function renderChips() {
 // Lanes: one row per symbol; upcoming notes sit at their symbol's row and
 // flow toward the now-line as you go. Solfège reads like a staff (do at
 // the bottom). Still self-paced — advance on selection only (spec §7).
-const NOTE_X0 = 120, NOTE_DX = 92;
+const NOTE_X0 = 214, NOTE_DX = 92; // now-line x; done slots sit left of it
 
 function renderLanes() {
   const wrap = $('lanes');
@@ -518,29 +534,24 @@ function renderLanes() {
   wrap.appendChild(now);
 
   const laneH = 46;
+  // The last two selections stay visible left of the now-line, with their
+  // verdicts — what you said, whether it landed.
+  const from = Math.max(0, run.pos - 2);
   const to = Math.min(run.seq.length, run.pos + LOOKAHEAD + 1);
-  for (let i = run.pos; i < to; i++) {
+  for (let i = from; i < to; i++) {
     const symIdx = run.seq[i];
     const el = document.createElement('span');
     el.textContent = SET.symbols[symIdx];
-    el.className = i === run.pos ? 'note cur' : 'note';
-    el.style.left = (NOTE_X0 + (i - run.pos) * NOTE_DX) + 'px';
+    let cls = 'note';
+    if (i < run.pos) cls += run.doneOk && run.doneOk[i] ? ' done-ok' : ' done-err';
+    else if (i === run.pos) cls += ' cur';
+    el.className = cls;
+    el.style.left = (i < run.pos
+      ? NOTE_X0 - (run.pos - i) * 56 // done slots: 158, 102
+      : NOTE_X0 + (i - run.pos) * NOTE_DX) + 'px';
     el.style.top = ((K - 1 - symIdx) * laneH + laneH / 2) + 'px';
     wrap.appendChild(el);
   }
-}
-
-// A miss in lanes mode: flash the missed target on its lane at the
-// now-line (the stream has already advanced past it).
-function flashMiss(symIdx) {
-  const K = SET.symbols.length;
-  const el = document.createElement('span');
-  el.textContent = SET.symbols[symIdx];
-  el.className = 'note done-err miss-flash';
-  el.style.left = NOTE_X0 + 'px';
-  el.style.top = ((K - 1 - symIdx) * 46 + 23) + 'px';
-  $('lanes').appendChild(el);
-  setTimeout(() => el.remove(), 450);
 }
 
 // ---- selection: one classified utterance ----
@@ -568,10 +579,7 @@ function onVoice(symbol, sim, margin, onsetT) {
   run.doneOk = run.doneOk || {};
   run.doneOk[run.pos] = verdict;
   if (verdict) run.sc++;
-  else {
-    run.si++;
-    if (effectiveDisplay() === 'lanes') flashMiss(expectedIdx);
-  }
+  else run.si++;
 
   const conf = Math.round(margin * 1000) / 1000;
   run.keylog.push({
@@ -882,22 +890,37 @@ function syncSheet() {
   for (const b of $('seg-display').querySelectorAll('button')) {
     b.classList.toggle('on', b.dataset.v === effectiveDisplay());
   }
+  for (const b of $('seg-sens').querySelectorAll('button')) {
+    b.classList.toggle('on', b.dataset.v === sensName);
+  }
   $('sheet-info').textContent =
     'N=' + N + ' · ' + BITS.toFixed(2) + ' bits/selection · ' + (SET.note || '') +
     ' · changes restart the bout';
 }
 
-$('seg-set').addEventListener('click', (e) => {
-  const b = e.target.closest('button');
-  if (!b) return;
-  b.blur();
-  setName = b.dataset.v;
+function selectSet(name) {
+  if (!SETS[name]) return;
+  setName = name;
   try { localStorage.setItem(SET_KEY, setName); } catch { /* fine */ }
   buildConfig();
   syncSheet();
   templates = loadTemplates();
   if (!templates) startCalibration();
   else toPractice();
+}
+
+$('seg-set').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  selectSet(b.dataset.v);
+});
+
+$('calib-seg-set').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  selectSet(b.dataset.v); // uncalibrated set -> calibration restarts for it
 });
 
 $('seg-display').addEventListener('click', (e) => {
@@ -910,6 +933,28 @@ $('seg-display').addEventListener('click', (e) => {
   syncSheet();
   toPractice(); // display is part of the config -> new variant
 });
+
+$('seg-sens').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  sensName = b.dataset.v;
+  try { localStorage.setItem(SENS_KEY, sensName); } catch { /* fine */ }
+  buildConfig();
+  syncSheet();
+  toPractice();
+});
+
+// Live mic readout while the sheet is open — shows whether "didn't
+// register" is a level problem (peak below threshold) at a glance.
+setInterval(() => {
+  if (!sheetOpen || !micOK) return;
+  const sens = SENS[sensName] || SENS.high;
+  $('mic-stats').textContent =
+    'mic: noise ' + seg.noiseFloor.toFixed(4) +
+    ' · peak ' + seg.peak.toFixed(3) +
+    ' · trigger ' + Math.max(seg.noiseFloor * 4, sens).toFixed(4);
+}, 400);
 
 $('recalibrate').addEventListener('click', () => {
   closeSheet();
