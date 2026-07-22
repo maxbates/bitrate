@@ -303,3 +303,38 @@ body.armed .note.cur { border-color: var(--accent); background: #2a2416; }
 #card .row { color: var(--dim); margin-top: 1rem; font-size: 16px; }
 #card .row b { color: var(--fg); font-weight: normal; }
 #card .note { color: var(--dim); margin-top: 1.4rem; font-size: 13px; }
+
+/* What the recognizer heard on a miss: outlined dim red, on the heard
+   symbol's lane, confidence in small text underneath. */
+.note.heard {
+  background: none;
+  border: 1px dashed rgba(224, 82, 82, .6);
+  color: rgba(224, 82, 82, .8);
+  opacity: .85;
+}
+.note.heard .conf-sub {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+/* ---- calibration on the tracks ---- */
+#calib-lanes {
+  position: relative;
+  width: min(560px, 88vw);
+}
+#calib-lanes .lane.calib-active { background: rgba(122, 162, 247, .07); }
+#calib-lanes .lane.calib-active .lane-label { color: var(--fg); }
+#calib-note { animation: calib-pulse 1.1s ease-in-out infinite; }
+@keyframes calib-pulse {
+  50% { box-shadow: 0 0 0 6px rgba(122, 162, 247, .12); }
+}
+#calib-note.captured {
+  border-color: var(--live);
+  color: var(--live);
+  animation: none;
+}

@@ -62,9 +62,11 @@ async function boot() {
 // Shared log-scale bps axis (all progress strips and sparklines use the
 // same domain — cross-environment comparison is the whole point).
 function bpsDomain(data) {
-  const vals = data.history.filter((h) => h.bps > 0).map((h) => h.bps);
+  // Verified runs only: synthetic/headless entries must not stretch the
+  // axis. Cap just above the best real observation.
+  const vals = data.history.filter((h) => h.verified && h.bps > 0).map((h) => h.bps);
   const lo = Math.max(0.3, Math.min(1, ...vals) * 0.8);
-  const hi = Math.max(2, ...vals) * 1.15;
+  const hi = Math.max(2, ...vals) * 1.08;
   const ticks = [0.5, 1, 2, 5, 10, 20, 50, 100].filter((t) => t >= lo && t <= hi);
   return { lo, hi, ticks };
 }
@@ -195,7 +197,7 @@ function renderProgress(data) {
 }
 
 function progressSVG(runs) {
-  const W = 480, H = 150, PL = 36, PR = 10, PT = 10, PB = 24;
+  const W = 480, H = 210, PL = 36, PR = 10, PT = 10, PB = 24;
   const plotW = W - PL - PR, plotH = H - PT - PB;
   const { lo, hi, ticks } = DATA.dom; // shared across every environment strip
   const x = (i) => PL + (runs.length > 1 ? (i / (runs.length - 1)) * plotW : plotW / 2);

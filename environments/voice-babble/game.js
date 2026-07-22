@@ -408,7 +408,7 @@ function updateLevel(rms) {
 
 // ---- calibration ----
 
-const CALIB_TAKES = 2;
+const CALIB_TAKES = 3;
 let calib = null; // {idx, take, takes: {symbol: [vec,...]}}
 
 function startCalibration() {
@@ -422,8 +422,38 @@ function renderCalib() {
     b.classList.toggle('on', b.dataset.v === setName);
   }
   const sym = SET.symbols[calib.idx];
-  $('calib-symbol').textContent = sym;
-  $('calib-symbol').classList.remove('captured');
+  const useLanes = SET.symbols.length <= MAX_LANES;
+  $('calib-symbol').hidden = useLanes;
+  $('calib-lanes').hidden = !useLanes;
+  if (useLanes) {
+    // Calibrate on the tracks: the symbol sits on its own lane, so the
+    // ladder is visible while you record — pitch neighbors apart and the
+    // recognizer hears it (F0 lands in the low spectral bands).
+    const wrap = $('calib-lanes');
+    const K = SET.symbols.length;
+    wrap.innerHTML = '';
+    for (let l = 0; l < K; l++) {
+      const lane = document.createElement('div');
+      lane.className = 'lane';
+      const laneSym = SET.symbols[K - 1 - l];
+      if (laneSym === sym) lane.classList.add('calib-active');
+      const label = document.createElement('span');
+      label.className = 'lane-label';
+      label.textContent = laneSym;
+      lane.appendChild(label);
+      wrap.appendChild(lane);
+    }
+    const note = document.createElement('span');
+    note.className = 'note cur';
+    note.id = 'calib-note';
+    note.textContent = sym;
+    note.style.left = '150px';
+    note.style.top = ((K - 1 - SET.symbols.indexOf(sym)) * 46 + 23) + 'px';
+    wrap.appendChild(note);
+  } else {
+    $('calib-symbol').textContent = sym;
+    $('calib-symbol').classList.remove('captured');
+  }
   $('calib-progress').textContent =
     'sound ' + (calib.idx + 1) + ' / ' + SET.symbols.length +
     ' · take ' + (calib.take + 1) + ' / ' + CALIB_TAKES +
@@ -434,6 +464,8 @@ function calibCapture(vec) {
   const sym = SET.symbols[calib.idx];
   (calib.takes[sym] = calib.takes[sym] || []).push(vec);
   $('calib-symbol').classList.add('captured');
+  const note = $('calib-note');
+  if (note) note.classList.add('captured');
   calib.take++;
   if (calib.take >= CALIB_TAKES) {
     calib.take = 0;
@@ -586,17 +618,33 @@ function renderLanes() {
   const to = Math.min(run.seq.length, run.pos + LOOKAHEAD + 1);
   for (let i = from; i < to; i++) {
     const symIdx = run.seq[i];
+    const doneX = NOTE_X0 - (run.pos - i) * 56; // done slots: 158, 102
     const el = document.createElement('span');
     el.textContent = SET.symbols[symIdx];
     let cls = 'note';
     if (i < run.pos) cls += run.doneOk && run.doneOk[i] ? ' done-ok' : ' done-err';
     else if (i === run.pos) cls += ' cur';
     el.className = cls;
-    el.style.left = (i < run.pos
-      ? NOTE_X0 - (run.pos - i) * 56 // done slots: 158, 102
-      : NOTE_X0 + (i - run.pos) * NOTE_DX) + 'px';
+    el.style.left = (i < run.pos ? doneX : NOTE_X0 + (i - run.pos) * NOTE_DX) + 'px';
     el.style.top = ((K - 1 - symIdx) * laneH + laneH / 2) + 'px';
     wrap.appendChild(el);
+
+    // For a miss, also show what the recognizer heard: an outlined dim-red
+    // bubble on the HEARD symbol's lane (position is the symbol), with the
+    // confidence in small text underneath.
+    const h = i < run.pos && run.heardAt && run.heardAt[i];
+    if (h) {
+      const hb = document.createElement('span');
+      hb.className = 'note heard';
+      hb.textContent = SET.symbols[h.idx];
+      hb.style.left = doneX + 'px';
+      hb.style.top = ((K - 1 - h.idx) * laneH + laneH / 2) + 'px';
+      const conf = document.createElement('span');
+      conf.className = 'conf-sub';
+      conf.textContent = h.conf.toFixed(2);
+      hb.appendChild(conf);
+      wrap.appendChild(hb);
+    }
   }
 }
 
@@ -621,13 +669,17 @@ function onVoice(symbol, sim, margin, onsetT) {
   const heardIdx = SET.symbols.indexOf(symbol);
   const expectedIdx = run.seq[run.pos];
   const verdict = heardIdx === expectedIdx;
+  const conf = Math.round(margin * 1000) / 1000;
 
   run.doneOk = run.doneOk || {};
   run.doneOk[run.pos] = verdict;
   if (verdict) run.sc++;
-  else run.si++;
+  else {
+    run.si++;
+    run.heardAt = run.heardAt || {};
+    run.heardAt[run.pos] = { idx: heardIdx, conf };
+  }
 
-  const conf = Math.round(margin * 1000) / 1000;
   run.keylog.push({
     i: run.keylog.length,
     key: String(heardIdx),
