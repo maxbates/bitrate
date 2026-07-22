@@ -337,10 +337,17 @@ document.addEventListener('keydown', (e) => {
   // Leave browser shortcuts (Cmd/Ctrl/Alt combos) alone.
   if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-  // While the settings sheet is open its controls own the keyboard.
+  // While the settings sheet is open its controls own Enter/Esc/arrows —
+  // but a letter or Backspace means "back to playing": close the sheet and
+  // let the key fall through as a selection.
   if (sheetOpen) {
-    if (e.key === 'Escape') { e.preventDefault(); closeSheet(); }
-    return;
+    if (e.key === 'Escape') { e.preventDefault(); closeSheet(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); closeSheet(); return; } // don't click a focused control
+    const playKey = e.key === 'Backspace' ||
+      (e.key.length === 1 && ALPHA.has(e.key.toLowerCase()));
+    if (!playKey) return; // sliders/buttons keep arrows, tab, space
+    closeSheet();
+    // fall through: this keystroke is a selection
   }
 
   // Overlay states: one-keypress restart affordances (spec §7).
@@ -817,6 +824,10 @@ function openSheet() {
 function closeSheet() {
   sheetOpen = false;
   sheetEl.classList.remove('open');
+  // A focused control would swallow the next Enter/Space press.
+  if (document.activeElement && sheetEl.contains(document.activeElement)) {
+    document.activeElement.blur();
+  }
 }
 
 function syncSheet() {
