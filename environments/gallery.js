@@ -26,6 +26,16 @@ const ENV_META = {
     desc: 'say the sounds — recognized on-device from your own calibrated voice; latency is the enemy',
     href: 'voice-babble/',
   },
+  'word-typing': {
+    name: 'word-typing',
+    desc: 'type i.i.d. words from a fixed list — the spec predicts a wash vs letters; measure it',
+    href: 'word-typing/',
+  },
+  'speech-words': {
+    name: 'speech-words',
+    desc: 'speak i.i.d. words — one utterance is one selection, so the big alphabet multiplies bits',
+    href: 'speech-words/',
+  },
 };
 
 const DEVICE_ID = localStorage.getItem('bitrate_device_id') || '';
@@ -120,6 +130,12 @@ function configSummary(variantId) {
   if (v.environment === 'voice-babble') {
     return (c.symbol_set || '') + ' · N=' + c.alphabet_size;
   }
+  if (v.environment === 'word-typing') {
+    return '≤' + c.word_max_len + ' letters · N=' + c.alphabet_size;
+  }
+  if (v.environment === 'speech-words') {
+    return (c.wordlist || '') + ' · N=' + c.alphabet_size;
+  }
   return variantId.slice(0, 8);
 }
 
@@ -162,6 +178,8 @@ function bitsLabel(env) {
   if (env === 'stream-typing') return 'N=27 · 4.70 bits/sel';
   if (env === 'pixel-lens') return 'N = your viewport';
   if (env === 'voice-babble') return 'N=6–26 · your voice';
+  if (env === 'word-typing') return 'N≈1–1.9k words · 10+ bits/sel';
+  if (env === 'speech-words') return 'N≤1.7k words · 10+ bits/sel';
   return '';
 }
 

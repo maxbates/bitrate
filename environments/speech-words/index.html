@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bit-rate — speech words</title>
+<link rel="stylesheet" href="game.css">
+<link rel="stylesheet" href="../common/results.css">
+</head>
+<body>
+  <div id="corner">
+    <div id="mode-banner" class="mode-practice">practice</div>
+    <div id="mode-help"></div>
+  </div>
+
+  <div id="hud">
+    <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
+    <div id="hud-time"></div>
+    <div id="hud-counts"></div>
+  </div>
+
+  <main id="stage">
+    <div id="chips"></div>
+    <div id="heard"><span id="level-dot"></span><span id="heard-text">starting recognition…</span></div>
+    <div id="hint">say the highlighted word clearly · each recognized word is a selection</div>
+    <div id="notice" hidden></div>
+  </main>
+
+  <section id="results" hidden>
+    <div id="res-hero"></div>
+    <div id="res-tiles"></div>
+    <div id="res-charts">
+      <figure>
+        <figcaption>pace — net bits/s per 5&thinsp;s <span class="err-key">▎misses</span></figcaption>
+        <div id="chart-pace"></div>
+      </figure>
+      <figure>
+        <figcaption>gap between selections</figcaption>
+        <div id="chart-iki"></div>
+      </figure>
+    </div>
+    <div id="res-footer">press <b>Enter</b> for a new scored run · <b>Esc</b> for practice</div>
+  </section>
+
+  <div id="overlay" hidden>
+    <div id="card"></div>
+  </div>
+
+  <button id="gear" title="settings">⚙ settings</button>
+  <div id="sheet">
+    <div class="sh-row">
+      <span class="sh-label">alphabet</span>
+      <div class="seg" id="seg-size">
+        <button data-v="256">256 words</button>
+        <button data-v="512">512</button>
+        <button data-v="1024">1024</button>
+        <button data-v="0">all</button>
+      </div>
+    </div>
+    <div class="sh-foot" id="sheet-info"></div>
+  </div>
+
+<script src="../common/words.js"></script>
+<script src="../common/results.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
