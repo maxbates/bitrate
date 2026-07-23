@@ -803,7 +803,14 @@ function drawArrow(x, y, size, angleDeg, color) {
 function drawFeedback(now) {
   const hy = H * 0.72;
   feedback = feedback.filter((f) => now - f.at < 700);
+  // Text bubbles collide when strokes come fast — keep only the newest
+  // text-bearing entry per hand; rings/crosses stack fine.
+  const newestText = {};
   for (const f of feedback) {
+    if (f.kind === 'wrong' || f.kind === 'early') newestText[f.hand] = f;
+  }
+  for (const f of feedback) {
+    if ((f.kind === 'wrong' || f.kind === 'early') && newestText[f.hand] !== f) continue;
     const age = (now - f.at) / 700;
     const x = laneX(f.hand);
     ctx.globalAlpha = 1 - age;

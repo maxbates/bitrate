@@ -29,7 +29,9 @@ body {
   user-select: none;
 }
 
-#field { position: absolute; inset: 0; display: block; }
+/* canvas is a replaced element: inset alone keeps its intrinsic 300x150 —
+   width/height must be explicit to fill the viewport */
+#field { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
 #corner { position: fixed; top: 14px; left: 18px; z-index: 5; }
 #mode-banner {
