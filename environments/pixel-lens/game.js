@@ -105,9 +105,10 @@ let mouse = { x: -1000, y: -1000, inField: false };
 function buildConfig() {
   const cell = Math.max(6, Math.round(cellMm * PX_PER_MM));
   const r = fieldEl.getBoundingClientRect();
-  // Inset the grid from the field edges so a target near the boundary
-  // never buries more than ~40% of the lens off-screen.
-  const pad = Math.round(loupeR * 0.6);
+  // Minimal inset from the field edges: dead margin is wasted alphabet
+  // (fewer cells → fewer bits/selection). The lens tapers to 1× at its rim,
+  // so an edge target stays legible even with the glass partly off-field.
+  const pad = 12;
   const cols = Math.max(2, Math.floor((r.width - 2 * pad) / cell));
   const rows = Math.max(2, Math.floor((r.height - 2 * pad) / cell));
   const ox = Math.round((r.width - cols * cell) / 2);
@@ -435,11 +436,31 @@ function drawLoupe() {
     const c = cellCenter(run.seq[run.pos]);
     const dx = c.x - mouse.x;
     const dy = c.y - mouse.y;
-    if (Math.hypot(dx, dy) > ARROW_DIST) {
+    const dist = Math.hypot(dx, dy);
+    if (dist > ARROW_DIST) {
       loupeArrow.hidden = false;
       loupeArrow.style.transform = 'rotate(' + Math.atan2(dy, dx) + 'rad)';
     } else {
       loupeArrow.hidden = true;
+    }
+    // True-position pin: the magnified image slides under the glass, but the
+    // click lands at the pointer's real coordinates. Once the target is under
+    // the lens, draw an undistorted ring at its actual screen offset — that
+    // ring, not the magnified dot, is where the pointer must go.
+    if (dist < loupeR) {
+      const tx = loupeR + dx;
+      const ty = loupeR + dy;
+      lctx.lineWidth = 3.5;
+      lctx.strokeStyle = 'rgba(0, 0, 0, .6)';
+      lctx.beginPath();
+      lctx.arc(tx, ty, 6, 0, Math.PI * 2);
+      lctx.stroke();
+      lctx.lineWidth = 1.75;
+      lctx.strokeStyle = '#e0b452';
+      lctx.beginPath();
+      lctx.arc(tx, ty, 6, 0, Math.PI * 2);
+      lctx.stroke();
+      lctx.lineWidth = 1;
     }
   }
 

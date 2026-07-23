@@ -99,8 +99,8 @@ body {
   opacity: .999; /* own compositing layer */
 }
 
-/* The playable grid, inset from the field edges (lens never buried more
-   than ~40% at a boundary target). Faint 1-cell lattice for scale. */
+/* The playable grid, nearly flush with the field edges — dead margin costs
+   cells, i.e. bits/selection. Faint 1-cell lattice for scale. */
 #gridarea {
   position: absolute;
   border: 1px solid var(--faint);
@@ -168,14 +168,15 @@ body.armed #field { cursor: none; }
   left: 50%;
   top: 50%;
   width: 220px;
-  height: 0;
-  margin-left: -110px;
+  height: 36px;
+  margin: -18px 0 0 -110px;
   color: var(--accent);
-  font-size: 18px;
-  line-height: 0;
+  font-size: 36px;
+  line-height: 36px;
   text-align: right;
   pointer-events: none;
-  /* rotated via transform in JS; ▸ sits at the ring edge */
+  /* rotated via transform in JS; ▸ sits at the ring edge. The strip is one
+     line-height tall and centered so the glyph stays on the radial axis. */
 }
 
 /* ---- settings: gear + bottom sheet (matches stream-typing) ---- */
