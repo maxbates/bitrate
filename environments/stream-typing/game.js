@@ -620,20 +620,27 @@ function renderHud() {
     hudBps.innerHTML = '0.0 <span class="hud-unit">bits/s</span>';
     hudTime.textContent = state === 'armed' ? CONFIG.duration_s + 's' : '';
     hudCounts.textContent = '';
+    $('hud-spark').innerHTML = '';
     return;
   }
-  // Running bit rate over all elapsed session time (spec §1 rule 3).
-  // Display-only floor at 1 s: right after the first keypress, elapsed is
-  // milliseconds and the true ratio is a meaningless 300+ bps spike.
   const elapsed = elapsedMsOf(run);
-  const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
-  hudBps.innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
   if (run.scored) {
+    // Scored HUD is cumulative over the run (spec §1 rule 3) — it previews the
+    // actual score. Display-only floor at 1 s avoids the first-keypress spike.
+    const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
+    hudBps.innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
     hudTime.textContent = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000)) + 's';
-  } else {
-    hudTime.textContent = Math.floor(elapsed / 1000) + 's practice';
+    hudCounts.textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
+    $('hud-spark').innerHTML = '';
+    return;
   }
-  hudCounts.textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
+  // Practice: trailing-60 s window + rolling sparkline (shared helpers), so the
+  // figure tracks current skill instead of being dragged down by warm-up.
+  const tr = window.BitrateResults.trailingBps(run.keylog, BITS, elapsed);
+  hudBps.innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
+  hudTime.textContent = Math.floor(elapsed / 1000) + 's practice';
+  hudCounts.textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
+  $('hud-spark').innerHTML = window.BitrateResults.sparkHTML(run.keylog, BITS, elapsed);
 }
 
 setInterval(renderHud, 1000); // >= 1x/sec from page load (spec §1 rule 3)

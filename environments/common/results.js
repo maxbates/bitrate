@@ -130,5 +130,76 @@ function ikiChartSVG(m) {
     '" text-anchor="' + anchor + '">median ' + fmtMs(m.median_iki_ms) + '</text>';
   return s + '</svg>';
 }
-  window.BitrateResults = { fmtMs, tilesHTML, paceChartSVG, ikiChartSVG };
+// ---- live practice HUD: trailing-window bps + rolling sparkline ----
+// Shared across every environment. Each selection carries {verdict,
+// t_pressed_ms} (the §5 log contract), so this is modality-agnostic — keys,
+// pointer, voice, swipes all feed the same computation. All client-side.
+
+const SPARK_WIN_MS = 60000;   // trailing window for the headline figure
+const SPARK_ROLL_MS = 6000;   // smoothing window for each sparkline sample
+const SPARK_STEP_MS = 1000;   // sample spacing
+const SPARK_W = 208, SPARK_H = 50, SPARK_PAD = 3;
+
+function windowNet(keylog, startT, endT) {
+  let sc = 0, si = 0;
+  for (const k of keylog) {
+    const t = k.t_pressed_ms;
+    if (t > startT && t <= endT) { if (k.verdict) sc++; else si++; }
+  }
+  return { sc, si };
+}
+
+// Net bits/s over the trailing winMs (default 60 s), divided by the elapsed
+// portion of that window (floored at 1 s so the figure isn't noisy at start).
+function trailingBps(keylog, bits, nowT, winMs) {
+  winMs = winMs || SPARK_WIN_MS;
+  const w = windowNet(keylog, nowT - winMs, nowT);
+  const net = Math.max(w.sc - w.si, 0);
+  const secs = Math.max(Math.min(winMs, nowT), 1000) / 1000;
+  return { bps: bits * net / secs, sc: w.sc, si: w.si };
+}
+
+// Visible span fills the panel width for the first minute (min 8 s so it isn't
+// over-zoomed at the very start), then holds at 60 s and scrolls.
+function sparkSpanMs(nowT) { return Math.min(SPARK_WIN_MS, Math.max(nowT, 8000)); }
+
+function sparkSeries(keylog, bits, nowT) {
+  const t0 = nowT - sparkSpanMs(nowT);
+  const pts = [];
+  for (let ts = nowT; ts >= Math.max(0, t0); ts -= SPARK_STEP_MS) {
+    const w = windowNet(keylog, ts - SPARK_ROLL_MS, ts);
+    pts.push({ ts, b: bits * Math.max(w.sc - w.si, 0) / (SPARK_ROLL_MS / 1000) });
+  }
+  pts.reverse();
+  return pts;
+}
+
+// Returns the sparkline SVG + caption, or '' when there isn't enough data yet.
+// Empty string collapses the host (.hud-spark-host:empty { display:none }).
+function sparkHTML(keylog, bits, nowT) {
+  const pts = sparkSeries(keylog, bits, nowT);
+  if (pts.length < 2) return '';
+  const span = sparkSpanMs(nowT), t0 = nowT - span;
+  let maxB = 1;
+  for (const p of pts) if (p.b > maxB) maxB = p.b;
+  const yMax = maxB * 1.15;
+  const clampX = (x) => Math.max(SPARK_PAD, Math.min(SPARK_W - SPARK_PAD, x));
+  const X = (ts) => clampX(SPARK_PAD + ((ts - t0) / span) * (SPARK_W - 2 * SPARK_PAD));
+  const Y = (b) => SPARK_H - SPARK_PAD - (b / yMax) * (SPARK_H - 2 * SPARK_PAD);
+  const base = SPARK_H - SPARK_PAD;
+  const line = pts.map((p, i) => (i ? 'L' : 'M') + X(p.ts).toFixed(1) + ' ' + Y(p.b).toFixed(1)).join(' ');
+  const area = 'M' + X(pts[0].ts).toFixed(1) + ' ' + base + ' ' +
+    pts.map((p) => 'L' + X(p.ts).toFixed(1) + ' ' + Y(p.b).toFixed(1)).join(' ') +
+    ' L' + X(pts[pts.length - 1].ts).toFixed(1) + ' ' + base + ' Z';
+  return '<svg class="spark-svg" viewBox="0 0 ' + SPARK_W + ' ' + SPARK_H + '" preserveAspectRatio="none">' +
+    '<path class="spark-area" d="' + area + '"/>' +
+    '<line class="spark-base" x1="' + SPARK_PAD + '" y1="' + base + '" x2="' + (SPARK_W - SPARK_PAD) + '" y2="' + base + '"/>' +
+    '<path class="spark-line" d="' + line + '"/></svg>' +
+    '<div class="spark-cap">bits/s · trailing 60&thinsp;s</div>';
+}
+
+  window.BitrateResults = {
+    fmtMs, tilesHTML, paceChartSVG, ikiChartSVG,
+    trailingBps, sparkSeries, sparkHTML,
+  };
 })();

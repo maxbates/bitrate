@@ -1,6 +1,38 @@
 /* Shared post-run results view + chart styles (spec §4.3/§4.4:
    one renderer, every environment). Pages define the color vars. */
 
+/* ---- live practice sparkline (every environment's header) ----
+   Injected into a `.hud-spark-host` element; empty when there's no data yet,
+   so :empty collapses it. Var fallbacks keep it correct even if a page's
+   theme omits one. Blue line so it never collides with target colors. */
+.hud-spark-host:empty { display: none; }
+/* Sits just to the LEFT of the HUD text (which is right-anchored), so it stays
+   in the top header strip and never grows down into the play area. #hud is a
+   positioned ancestor in every environment, so right:100% anchors to it. */
+.hud-spark-host:not(:empty) {
+  position: absolute;
+  top: 0;
+  right: 100%;
+  margin-right: 12px;
+  padding: 5px 7px 3px;
+  background: rgba(16, 18, 22, .9);
+  border: 1px solid var(--faint, #2a2e36);
+  border-radius: 7px;
+  text-align: right;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.hud-spark-host .spark-svg { display: block; width: 208px; height: 50px; }
+.hud-spark-host .spark-cap { font-size: 11px; color: var(--dim, #565c66); margin-top: 2px; }
+.hud-spark-host .spark-area { fill: rgba(122, 162, 247, .14); stroke: none; }
+.hud-spark-host .spark-base { stroke: var(--faint, #2a2e36); stroke-width: 1; }
+.hud-spark-host .spark-line {
+  fill: none;
+  stroke: var(--caret, #7aa2f7);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 
 #results {
   position: absolute;

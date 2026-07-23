@@ -908,17 +908,25 @@ function renderHud() {
     $('hud-bps').innerHTML = '0.0 <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = state === 'armed' ? CONFIG.duration_s + 's' : '';
     $('hud-counts').textContent = '';
+    $('hud-spark').innerHTML = '';
     return;
   }
   const elapsed = elapsedMsOf(run);
-  const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
-  $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
   if (run.scored) {
+    // Scored HUD stays cumulative — it previews the actual 60 s score.
+    const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
+    $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000)) + 's';
-  } else {
-    $('hud-time').textContent = Math.floor(elapsed / 1000) + 's practice';
+    $('hud-counts').textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
+    $('hud-spark').innerHTML = '';
+    return;
   }
-  $('hud-counts').textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
+  // Practice: trailing-60 s window + rolling sparkline (shared helpers).
+  const tr = window.BitrateResults.trailingBps(run.keylog, BITS, elapsed);
+  $('hud-bps').innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
+  $('hud-time').textContent = Math.floor(elapsed / 1000) + 's practice';
+  $('hud-counts').textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
+  $('hud-spark').innerHTML = window.BitrateResults.sparkHTML(run.keylog, BITS, elapsed);
 }
 
 setInterval(renderHud, 1000);

@@ -1059,17 +1059,26 @@ function renderHud() {
       state === 'armed' ? 'starts in ' + Math.max(1, Math.ceil((run ? run.t0 - performance.now() : 0) / 1000)) + 's' : '';
     $('hud-counts').textContent = '';
     if (run && !run.scored && run.pos > 0) hudCounts();
+    $('hud-spark').innerHTML = '';
     return;
   }
   const elapsed = elapsedMsOf(run);
-  const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
-  $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
   if (run.scored) {
+    // Scored HUD stays cumulative — it previews the actual 60 s score.
+    const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
+    $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000)) + 's';
-  } else {
-    $('hud-time').textContent = Math.floor(elapsed / 1000) + 's practice';
+    hudCounts();
+    $('hud-spark').innerHTML = '';
+    return;
   }
-  hudCounts();
+  // Practice: trailing-60 s window + rolling sparkline (shared helpers). A miss
+  // (verdict:false) counts as an incorrect selection, same as scoring.
+  const tr = window.BitrateResults.trailingBps(run.keylog, BITS, elapsed);
+  $('hud-bps').innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
+  $('hud-time').textContent = Math.floor(elapsed / 1000) + 's practice';
+  $('hud-counts').textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
+  $('hud-spark').innerHTML = window.BitrateResults.sparkHTML(run.keylog, BITS, elapsed);
 }
 
 function hudCounts() {
