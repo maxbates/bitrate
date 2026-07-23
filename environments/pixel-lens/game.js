@@ -26,6 +26,19 @@ const ARROW_DIST = 320;      // beyond this, show the direction affordance
 const SETTINGS_KEY = 'bitrate_pixel_settings_v1';
 const DEFAULT_CELL_MM = 5;
 
+// Input mode drives cell-size options, loupe presence, and grid inset.
+//   mouse — fine cells + hover-driven fisheye loupe (the original mode).
+//   touch — finger-sized cells, no loupe: a touchscreen has no hover, so you
+//           tap the target directly (an iPad on the same WiFi, say). Same grid,
+//           same honest-N accounting; the mode is part of the variant identity,
+//           so mouse-vs-touch is a within-environment leaderboard comparison.
+const CELL_OPTS = { mouse: [3, 5, 7.5, 10], touch: [12, 16, 20, 25] };
+const DEFAULT_CELL = { mouse: 5, touch: 20 };
+const CELL_MIN = 2, CELL_MAX = 30;
+const MAX_PREVIEW = 4;
+
+let inputMode = 'mouse';   // 'mouse' | 'touch'
+let previewDepth = 0;      // look-ahead: upcoming targets shown as dimmer dots
 let cellMm = DEFAULT_CELL_MM;
 let zoomMode = 'auto'; // 'auto' (25mm apparent) or a fixed multiplier
 
@@ -36,15 +49,21 @@ let lensMag = 5; // center magnification; falls off to 1 at the rim
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    if (typeof s.cell_mm === 'number' && s.cell_mm >= 2 && s.cell_mm <= 15) cellMm = s.cell_mm;
+    if (s.input === 'mouse' || s.input === 'touch') inputMode = s.input;
+    if (typeof s.cell_mm === 'number' && s.cell_mm >= CELL_MIN && s.cell_mm <= CELL_MAX) cellMm = s.cell_mm;
     if (s.zoom === 'auto' || (typeof s.zoom === 'number' && s.zoom >= 2 && s.zoom <= 8)) zoomMode = s.zoom;
     if (typeof s.lens_r === 'number' && s.lens_r >= 60 && s.lens_r <= 180) loupeR = s.lens_r;
+    if (typeof s.preview === 'number' && s.preview >= 0 && s.preview <= MAX_PREVIEW) previewDepth = Math.round(s.preview);
   } catch { /* defaults */ }
+  // Snap the cell size to a valid option for the mode (options differ by mode).
+  if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
 }
 
 function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ cell_mm: cellMm, zoom: zoomMode, lens_r: loupeR }));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+      input: inputMode, cell_mm: cellMm, zoom: zoomMode, lens_r: loupeR, preview: previewDepth,
+    }));
   } catch { /* fine */ }
 }
 
@@ -103,11 +122,13 @@ let mouse = { x: -1000, y: -1000, inField: false };
 // ---- config from viewport ----
 
 function buildConfig() {
+  const loupeOn = inputMode === 'mouse';
   const cell = Math.max(6, Math.round(cellMm * PX_PER_MM));
   const r = fieldEl.getBoundingClientRect();
-  // Inset the grid from the field edges so a target near the boundary
-  // never buries more than ~40% of the lens off-screen.
-  const pad = Math.round(loupeR * 0.6);
+  // Inset the grid from the field edges. Mouse mode keeps a lens-radius margin
+  // so the loupe is never buried more than ~40% at a boundary target; touch
+  // has no loupe, so a half-cell finger margin is enough and the grid fills more.
+  const pad = loupeOn ? Math.round(loupeR * 0.6) : Math.round(cell * 0.5);
   const cols = Math.max(2, Math.floor((r.width - 2 * pad) / cell));
   const rows = Math.max(2, Math.floor((r.height - 2 * pad) / cell));
   const ox = Math.round((r.width - cols * cell) / 2);
@@ -120,6 +141,9 @@ function buildConfig() {
   ga.style.height = (rows * cell) + 'px';
   ga.style.backgroundSize = cell + 'px ' + cell + 'px';
   applyLoupeSize();
+  // Touch has no cursor to hide; mouse hides it so the loupe *is* the cursor.
+  fieldEl.style.cursor = loupeOn ? 'none' : 'auto';
+  if (!loupeOn) loupeEl.hidden = true;
   // Center magnification: auto targets ~ZOOM_TARGET_MM apparent size,
   // tapering to 1x at the rim (see drawLoupe); or a fixed multiplier.
   lensMag = zoomMode === 'auto'
@@ -134,13 +158,15 @@ function buildConfig() {
     grid_rows: rows,
     cell_px: cell,
     cell_mm: cellMm,
-    loupe_r_px: loupeR,
-    loupe_mag: Math.round(lensMag * 100) / 100,
-    loupe_zoom_mode: String(zoomMode),
+    input: inputMode,
+    loupe: loupeOn ? 'on' : 'off',
+    preview: previewDepth,
+    loupe_r_px: loupeOn ? loupeR : 0,
+    loupe_mag: loupeOn ? Math.round(lensMag * 100) / 100 : 0,
+    loupe_zoom_mode: loupeOn ? String(zoomMode) : 'off',
     grid_pad_px: pad,
     viewport_w: Math.round(window.innerWidth),
     viewport_h: Math.round(window.innerHeight),
-    pointer: 'mouse',
     error_policy: 'advance',
     backspace: false,
     duration_s: 60,
@@ -151,8 +177,9 @@ function buildConfig() {
   $('res-info').innerHTML =
     '<b>' + CONFIG.viewport_w + '×' + CONFIG.viewport_h + '</b> px · ' +
     '<b>' + cols + '×' + rows + '</b> cells of ' + cellMm + ' mm' +
-    ' (~' + Math.round(cellMm * lensMag) + ' mm in lens) · ' +
-    'N=<b>' + N + '</b> · <b>' + BITS.toFixed(2) + '</b> bits/selection';
+    (loupeOn ? ' (~' + Math.round(cellMm * lensMag) + ' mm in lens)' : ' · touch') +
+    ' · N=<b>' + N + '</b> · <b>' + BITS.toFixed(2) + '</b> bits/selection' +
+    (previewDepth ? ' · look-ahead <b>' + previewDepth + '</b>' : '');
 }
 
 // ---- run lifecycle ----
@@ -206,6 +233,8 @@ function setState(next) {
   $('corner').hidden = next === 'done';
   $('res-info').hidden = next === 'done';
   $('gear').hidden = next !== 'practice';
+  if (next !== 'practice') $('hud-spark').innerHTML = '';
+  if (next === 'done') { hidePreviews(); targetEl.hidden = true; }
   if (next !== 'practice' && sheetOpen) closeSheet();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
@@ -239,17 +268,64 @@ function placeTarget() {
   const c = cellCenter(run.seq[run.pos]);
   targetEl.style.left = c.x + 'px';
   targetEl.style.top = c.y + 'px';
+  targetEl.style.setProperty('--cell', grid.cell + 'px'); // the fill spans one cell
   targetEl.hidden = false;
   // Restart the bull's-eye cue animation.
   targetEl.classList.remove('cue');
   void targetEl.offsetWidth;
   targetEl.classList.add('cue');
+  placePreviews();
+}
+
+// ---- look-ahead previews: dimmer, static dots for the next targets ----
+// Purely visual — never interactive. A tap is always judged against the live
+// target (spec §2.1 ground truth); tapping a preview just resolves the current
+// target as an incorrect selection under advance-always. This is the pointing
+// analog of the visible upcoming characters in stream-typing: it lets the
+// player pre-plan the next saccade + reach, so it speeds the task honestly
+// without leaking bits (targets stay i.i.d. uniform over N).
+
+const previewLayer = $('previews');
+let previewEls = [];
+
+function ensurePreviewPool(n) {
+  while (previewEls.length < n) {
+    const el = document.createElement('div');
+    el.className = 'preview-dot';
+    el.hidden = true;
+    el.innerHTML = '<div class="pring2"></div><div class="pring"></div><div class="pdot"></div>';
+    previewLayer.appendChild(el);
+    previewEls.push(el);
+  }
+}
+
+function placePreviews() {
+  for (let k = 0; k < previewEls.length; k++) {
+    const el = previewEls[k];
+    const seqIdx = run ? run.pos + 1 + k : -1;
+    if (!run || k >= previewDepth || seqIdx >= run.seq.length || state === 'done') {
+      el.hidden = true;
+      continue;
+    }
+    const c = cellCenter(run.seq[seqIdx]);
+    el.style.left = c.x + 'px';
+    el.style.top = c.y + 'px';
+    // Nearer previews a touch stronger; all dimmer than the solid live cell.
+    el.style.opacity = String(Math.max(0.28, 0.72 - k * 0.18));
+    el.hidden = false;
+  }
+}
+
+function hidePreviews() {
+  for (const el of previewEls) el.hidden = true;
 }
 
 // ---- selection: mousedown is the earliest pointer event ----
 
-fieldEl.addEventListener('mousedown', (e) => {
+fieldEl.addEventListener('pointerdown', (e) => {
   e.preventDefault();
+  if (!e.isPrimary) return;                                // ignore extra fingers
+  if (e.pointerType === 'mouse' && e.button !== 0) return; // left button only
   if (sheetOpen) closeSheet(); // a field click means "back to playing"
   if (state !== 'practice' && state !== 'armed' && state !== 'scored') return;
   if (run.scored && run.started && e.timeStamp - run.t0 >= DURATION_MS) return;
@@ -277,7 +353,11 @@ fieldEl.addEventListener('mousedown', (e) => {
   const verdict = cell === expected;
 
   if (verdict) run.sc++;
-  else { run.si++; missFlash(); }
+  else run.si++;
+  // Feedback: touch has no loupe border to flash, so pop a ring at the tap
+  // point; mouse keeps the loupe-rim flash on a miss.
+  if (inputMode === 'touch') tapFlash(x, y, verdict);
+  else if (!verdict) missFlash();
 
   run.keylog.push({
     i: run.keylog.length,
@@ -301,7 +381,7 @@ fieldEl.addEventListener('mousedown', (e) => {
   placeTarget();
 });
 
-fieldEl.addEventListener('mouseup', (e) => {
+fieldEl.addEventListener('pointerup', (e) => {
   if (!run || !run.started || !run.keylog.length) return;
   const last = run.keylog[run.keylog.length - 1];
   if (last.t_keyup_ms === null) last.t_keyup_ms = e.timeStamp - run.t0;
@@ -312,11 +392,22 @@ function missFlash() {
   setTimeout(() => { loupeEl.style.borderColor = ''; }, 160);
 }
 
-// ---- loupe: canvas fisheye assist, rAF-throttled ----
+// A ring that pops at the tap point — the touch analog of the loupe-rim flash.
+function tapFlash(x, y, ok) {
+  const el = document.createElement('div');
+  el.className = 'tap-flash' + (ok ? ' ok' : ' miss');
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  fieldEl.appendChild(el);
+  setTimeout(() => el.remove(), 380);
+}
+
+// ---- loupe: canvas fisheye assist, rAF-throttled (mouse mode only) ----
 
 let rafPending = false;
 
-fieldEl.addEventListener('mousemove', (e) => {
+fieldEl.addEventListener('pointermove', (e) => {
+  if (inputMode !== 'mouse' || e.pointerType !== 'mouse') return;
   const r = fieldEl.getBoundingClientRect();
   mouse.x = e.clientX - r.left;
   mouse.y = e.clientY - r.top;
@@ -327,7 +418,7 @@ fieldEl.addEventListener('mousemove', (e) => {
   }
 });
 
-fieldEl.addEventListener('mouseleave', () => {
+fieldEl.addEventListener('pointerleave', () => {
   mouse.inField = false;
   loupeEl.hidden = true;
 });
@@ -372,26 +463,46 @@ function drawScene(dpr, side) {
   }
   sctx.stroke();
 
-  // Target cell highlight + dot at 1:1.
+  // Look-ahead previews at 1:1, dimmer, drawn under the live target.
+  if (run && state !== 'done') {
+    for (let k = 0; k < previewDepth; k++) {
+      const si = run.pos + 1 + k;
+      if (si >= run.seq.length) break;
+      const c = cellCenter(run.seq[si]);
+      const lx = c.x - mouse.x + loupeR;
+      const ly = c.y - mouse.y + loupeR;
+      if (lx > -grid.cell && lx < side + grid.cell && ly > -grid.cell && ly < side + grid.cell) {
+        // green bullseye: ring + center dot, dimmer with depth
+        const a = Math.max(0.22, 0.6 - k * 0.15);
+        sctx.strokeStyle = 'rgba(88, 179, 104, ' + a + ')';
+        sctx.lineWidth = 2;
+        sctx.beginPath();
+        sctx.arc(lx, ly, Math.max(4, grid.cell * 0.32), 0, Math.PI * 2);
+        sctx.stroke();
+        sctx.fillStyle = 'rgba(88, 179, 104, ' + a + ')';
+        sctx.beginPath();
+        sctx.arc(lx, ly, Math.max(1.5, grid.cell * 0.1), 0, Math.PI * 2);
+        sctx.fill();
+      }
+    }
+  }
+
+  // Live target: a solid yellow fill of the cell (the "act now" cue).
   if (run && run.pos < run.seq.length && state !== 'done') {
     const c = cellCenter(run.seq[run.pos]);
     const lx = c.x - mouse.x + loupeR;
     const ly = c.y - mouse.y + loupeR;
     if (lx > -grid.cell && lx < side + grid.cell && ly > -grid.cell && ly < side + grid.cell) {
-      const half = grid.cell / 2;
-      sctx.fillStyle = 'rgba(224, 180, 82, .16)';
+      const half = grid.cell / 2 - 1;
+      sctx.fillStyle = 'rgba(224, 180, 82, .9)';
       sctx.fillRect(lx - half, ly - half, half * 2, half * 2);
-      sctx.fillStyle = '#e0b452';
-      sctx.beginPath();
-      sctx.arc(lx, ly, Math.max(2.5, grid.cell * 0.14), 0, Math.PI * 2);
-      sctx.fill();
     }
   }
 }
 
 function drawLoupe() {
   rafPending = false;
-  if (!mouse.inField || fieldEl.hidden) { loupeEl.hidden = true; return; }
+  if (inputMode !== 'mouse' || !mouse.inField || fieldEl.hidden) { loupeEl.hidden = true; return; }
   loupeEl.hidden = false;
   loupeEl.style.transform = 'translate(' + mouse.x + 'px,' + mouse.y + 'px)';
 
@@ -501,32 +612,35 @@ function closeSheet() {
   }
 }
 
-function syncSheet() {
-  for (const b of $('seg-cell').querySelectorAll('button')) {
-    b.classList.toggle('on', Number(b.dataset.v) === cellMm);
-  }
-  for (const b of $('seg-zoom').querySelectorAll('button')) {
-    b.classList.toggle('on', b.dataset.v === String(zoomMode));
-  }
-  for (const b of $('seg-lens').querySelectorAll('button')) {
-    b.classList.toggle('on', Number(b.dataset.v) === loupeR);
-  }
-  $('sheet-info').textContent =
-    grid.cols + '×' + grid.rows + ' cells · N=' + N + ' · ' + BITS.toFixed(2) +
-    ' bits/selection · lens ' + lensMag.toFixed(1) + '× / r' + loupeR +
-    ' · ~' + Math.round(cellMm * lensMag) + ' mm in lens · changes restart the bout';
+// Cell-size options differ by input mode, so the segment is rebuilt on mode
+// change; click handling is delegated on the container, so it survives that.
+function renderCellSeg() {
+  $('seg-cell').innerHTML = CELL_OPTS[inputMode]
+    .map((v) => '<button data-v="' + v + '">' + v + ' mm</button>')
+    .join('');
 }
 
-$('seg-cell').addEventListener('click', (e) => {
-  const b = e.target.closest('button');
-  if (!b) return;
-  b.blur();
-  cellMm = Number(b.dataset.v);
-  saveSettings();
-  buildConfig();
-  syncSheet();
-  toPractice();
-});
+function segOn(id, pred) {
+  for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', pred(b));
+}
+
+function syncSheet() {
+  const loupeOn = inputMode === 'mouse';
+  segOn('seg-input', (b) => b.dataset.v === inputMode);
+  segOn('seg-cell', (b) => Number(b.dataset.v) === cellMm);
+  segOn('seg-zoom', (b) => b.dataset.v === String(zoomMode));
+  segOn('seg-lens', (b) => Number(b.dataset.v) === loupeR);
+  segOn('seg-preview', (b) => Number(b.dataset.v) === previewDepth);
+  $('row-zoom').hidden = !loupeOn; // lens controls are meaningless in touch mode
+  $('row-lens').hidden = !loupeOn;
+  $('sheet-info').textContent =
+    grid.cols + '×' + grid.rows + ' cells · N=' + N + ' · ' + BITS.toFixed(2) +
+    ' bits/selection' +
+    (loupeOn ? ' · lens ' + lensMag.toFixed(1) + '× / r' + loupeR +
+      ' · ~' + Math.round(cellMm * lensMag) + ' mm in lens' : ' · touch, no lens') +
+    (previewDepth ? ' · look-ahead ' + previewDepth : '') +
+    ' · changes restart the bout';
+}
 
 function segApply(mut) {
   mut();
@@ -535,6 +649,31 @@ function segApply(mut) {
   syncSheet();
   toPractice();
 }
+
+$('seg-input').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || b.dataset.v === inputMode) return;
+  b.blur();
+  segApply(() => {
+    inputMode = b.dataset.v;
+    if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
+    renderCellSeg();
+  });
+});
+
+$('seg-cell').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  segApply(() => { cellMm = Number(b.dataset.v); });
+});
+
+$('seg-preview').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  segApply(() => { previewDepth = Number(b.dataset.v); });
+});
 
 $('seg-zoom').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -761,25 +900,38 @@ function scheduleFlush(delay) {
   }, delay);
 }
 
-// ---- HUD: exactly 1 Hz ----
+// ---- HUD: exactly 1 Hz. Practice metrics are a trailing-60 s window +
+// rolling sparkline (shared BitrateResults helpers — same in every env). ----
+
+const R = window.BitrateResults;
 
 function renderHud() {
   if (state === 'done') return;
+  const spark = $('hud-spark');
   if (!run || !run.started) {
     $('hud-bps').innerHTML = '0.0 <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = state === 'armed' ? CONFIG.duration_s + 's' : '';
     $('hud-counts').textContent = '';
+    spark.innerHTML = '';
     return;
   }
-  const elapsed = elapsedMsOf(run);
-  const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
-  $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
+  const nowT = elapsedMsOf(run);
   if (run.scored) {
-    $('hud-time').textContent = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000)) + 's';
-  } else {
-    $('hud-time').textContent = Math.floor(elapsed / 1000) + 's practice';
+    // Scored HUD stays cumulative — it previews the actual 60 s score.
+    const cs = scoreWith(run, Math.max(nowT, 1000) / 1000);
+    $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
+    $('hud-time').textContent = Math.max(0, Math.ceil((DURATION_MS - nowT) / 1000)) + 's';
+    $('hud-counts').textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
+    spark.innerHTML = '';
+    return;
   }
-  $('hud-counts').textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
+  // Practice: trailing-60 s window, so the figure reflects current skill
+  // rather than being dragged down by warm-up.
+  const tr = R.trailingBps(run.keylog, BITS, nowT);
+  $('hud-bps').innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
+  $('hud-time').textContent = Math.floor(nowT / 1000) + 's practice';
+  $('hud-counts').textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
+  spark.innerHTML = R.sparkHTML(run.keylog, BITS, nowT);
 }
 
 setInterval(renderHud, 1000);
@@ -807,7 +959,6 @@ function renderResults(opts) {
     note;
 
   const m = opts.server && opts.server.metrics;
-  const R = window.BitrateResults;
   $('res-tiles').innerHTML = m ? R.tilesHTML(m, { corrections: false }) : '';
   $('chart-pace').innerHTML = m && m.selections > 1 ? R.paceChartSVG(m, BITS) : '';
   $('chart-iki').innerHTML = m && m.selections > 1 ? R.ikiChartSVG(m) : '';
@@ -834,14 +985,45 @@ async function applyCfgParam() {
     const v = (data.variants || []).find((x) => x.config_hash === h);
     if (!v || v.environment !== 'pixel-lens') return;
     const c = typeof v.config === 'string' ? JSON.parse(v.config) : v.config;
-    if (typeof c.cell_mm === 'number' && c.cell_mm >= 2 && c.cell_mm <= 15) {
-      cellMm = c.cell_mm;
-      buildConfig();
-    }
+    if (c.input === 'mouse' || c.input === 'touch') inputMode = c.input;
+    if (typeof c.preview === 'number' && c.preview >= 0 && c.preview <= MAX_PREVIEW) previewDepth = Math.round(c.preview);
+    if (typeof c.cell_mm === 'number' && c.cell_mm >= CELL_MIN && c.cell_mm <= CELL_MAX) cellMm = c.cell_mm;
+    if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
+    renderCellSeg();
+    buildConfig();
   } catch { /* ship build or unknown hash: defaults */ }
 }
 
+// ---- headless test hook (the beatDebug/voiceDebug pattern) ----
+// Lets QA drive deterministic taps and read state without a real pointer.
+window.pixelDebug = {
+  state: () => state,
+  config: () => CONFIG,
+  counts: () => (run ? { sc: run.sc, si: run.si, pos: run.pos } : null),
+  trailingBps: (winMs) => (run && run.started ? R.trailingBps(run.keylog, BITS, elapsedMsOf(run), winMs) : null),
+  sparkSeries: () => (run && run.started ? R.sparkSeries(run.keylog, BITS, elapsedMsOf(run)) : null),
+  targetCell: () => (run && run.pos < run.seq.length ? run.seq[run.pos] : null),
+  previewCount: () => previewEls.filter((e) => !e.hidden).length,
+  // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
+  // current input mode) — exercises the same handler a finger/mouse would.
+  tapCell: (idx, type) => {
+    const c = cellCenter(idx);
+    const fr = fieldEl.getBoundingClientRect();
+    fieldEl.dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: fr.left + c.x,
+      clientY: fr.top + c.y,
+      button: 0,
+      isPrimary: true,
+      pointerType: type || inputMode,
+      bubbles: true,
+      cancelable: true,
+    }));
+  },
+};
+
 loadSettings();
+ensurePreviewPool(MAX_PREVIEW);
+renderCellSeg();
 buildConfig();
 scheduleFlush(1500);
 applyCfgParam().then(() => startRun(false)).catch(showError);

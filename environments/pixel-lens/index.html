@@ -19,18 +19,22 @@
     </div>
     <div id="res-info"></div>
     <div id="hud">
-      <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
-      <div id="hud-time"></div>
-      <div id="hud-counts"></div>
+      <div id="hud-spark" class="hud-spark-host"></div>
+      <div id="hud-metrics">
+        <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
+        <div id="hud-time"></div>
+        <div id="hud-counts"></div>
+      </div>
     </div>
   </div>
 
   <main id="field">
     <div id="gridarea"></div>
+    <div id="previews"></div>
     <div id="target" hidden>
+      <div class="fill"></div>
       <div class="ring r1"></div>
       <div class="ring r2"></div>
-      <div class="dot"></div>
     </div>
     <div id="loupe" hidden>
       <canvas id="loupe-canvas"></canvas>
@@ -65,15 +69,27 @@
   <button id="gear" title="settings">⚙ settings</button>
   <div id="sheet">
     <div class="sh-row">
-      <span class="sh-label">cell size</span>
-      <div class="seg" id="seg-cell">
-        <button data-v="3">3 mm</button>
-        <button data-v="5">5 mm</button>
-        <button data-v="7.5">7.5 mm</button>
-        <button data-v="10">10 mm</button>
+      <span class="sh-label">input</span>
+      <div class="seg" id="seg-input">
+        <button data-v="mouse">mouse + loupe</button>
+        <button data-v="touch">touch (tablet)</button>
       </div>
     </div>
     <div class="sh-row">
+      <span class="sh-label">cell size</span>
+      <!-- options depend on input mode; populated by renderCellSeg() -->
+      <div class="seg" id="seg-cell"></div>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">look-ahead</span>
+      <div class="seg" id="seg-preview">
+        <button data-v="0">off</button>
+        <button data-v="1">1</button>
+        <button data-v="2">2</button>
+        <button data-v="3">3</button>
+      </div>
+    </div>
+    <div class="sh-row" id="row-zoom">
       <span class="sh-label">lens zoom</span>
       <div class="seg" id="seg-zoom">
         <button data-v="auto">auto</button>
@@ -83,7 +99,7 @@
         <button data-v="6">6×</button>
       </div>
     </div>
-    <div class="sh-row">
+    <div class="sh-row" id="row-lens">
       <span class="sh-label">lens size</span>
       <div class="seg" id="seg-lens">
         <button data-v="80">small</button>

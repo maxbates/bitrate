@@ -29,23 +29,31 @@ body {
 
 /* ---- top bar ---- */
 
+/* Three in-flow zones: left = mode + Enter/Esc, middle = compact config,
+   right = graph + key metrics. Tall enough that the left cluster fits. */
 #topbar {
   position: relative;
-  height: 78px;
+  height: 112px;
   border-bottom: 1px solid var(--faint);
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  gap: 22px;
+  padding: 0 20px;
 }
 
+/* Middle: the config accounting, kept compact so it clears the graph. */
 #res-info {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--dim);
-  font-size: 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
   text-align: center;
 }
 #res-info b { color: var(--fg); font-weight: normal; }
 
-#corner { position: absolute; top: 12px; left: 18px; }
+#corner { flex: 0 0 auto; }
 #mode-banner {
   display: inline-block;
   font-size: 13px;
@@ -74,14 +82,22 @@ body {
 }
 #mode-help .armed-note { color: var(--accent); }
 
+/* Right zone: graph + metrics, side by side and in-flow (overrides the shared
+   absolute placement, which is meant for the floating-corner environments). */
 #hud {
-  position: absolute;
-  top: 8px;
-  right: 18px;
-  text-align: right;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 16px;
   color: var(--dim);
   font-size: 14px;
   line-height: 1.45;
+}
+#hud-metrics { text-align: right; }
+#topbar .hud-spark-host:not(:empty) {
+  position: static;
+  right: auto;
+  margin-right: 0;
 }
 #hud-bps { font-size: 18px; }
 .hud-unit { font-size: 12px; }
@@ -90,13 +106,17 @@ body {
 
 #field {
   position: absolute;
-  top: 78px;
+  top: 112px; /* matches #topbar height */
   left: 0;
   right: 0;
   bottom: 54px; /* footer strip: the gear lives there, never over the grid */
-  cursor: none; /* the loupe is the cursor */
+  cursor: none; /* the loupe is the cursor (mouse mode); JS sets auto for touch */
   overflow: hidden;
   opacity: .999; /* own compositing layer */
+  /* touch mode: taps must not scroll, zoom, or flash the tap-highlight */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
 }
 
 /* The playable grid, inset from the field edges (lens never buried more
@@ -119,19 +139,18 @@ body.armed #field { cursor: none; }
   height: 0;
   pointer-events: none;
 }
-#target .dot {
+/* The live target fills its cell in solid yellow — the "act on this now" cue.
+   --cell is set per-target in JS since cell size is viewport-derived. */
+#target .fill {
   position: absolute;
-  left: -3px;
-  top: -3px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+  left: calc(var(--cell, 12px) / -2 + 2px);
+  top: calc(var(--cell, 12px) / -2 + 2px);
+  width: calc(var(--cell, 12px) - 4px);
+  height: calc(var(--cell, 12px) - 4px);
   background: var(--accent);
-  box-shadow: 0 0 10px 2px rgba(224, 180, 82, .75);
-  animation: dot-pulse 1.2s ease-in-out infinite;
-}
-@keyframes dot-pulse {
-  50% { box-shadow: 0 0 16px 5px rgba(224, 180, 82, .5); }
+  border-radius: 4px;
+  opacity: .92;
+  box-shadow: 0 0 14px 3px rgba(224, 180, 82, .45);
 }
 #target .ring {
   position: absolute;
@@ -147,6 +166,66 @@ body.armed #field { cursor: none; }
 @keyframes ring-in {
   0%   { opacity: .9; left: -140px; top: -140px; width: 280px; height: 280px; }
   100% { opacity: 0;  left: -8px;   top: -8px;   width: 16px;  height: 16px; }
+}
+
+/* ---- look-ahead previews: dimmer, static bull's-eyes for upcoming targets.
+   No animation (spec §7: no decorative motion on the target stream); opacity
+   is set per-dot in JS so nearer previews read slightly stronger. Always
+   subordinate to the live target's collapsing cue. pointer-events: none keeps
+   them non-interactive — a tap only ever resolves the live target. */
+
+/* Upcoming targets read as GREEN bull's-eyes — a distinct color from the
+   yellow live cell so "next" never reads as "now". Concentric rings + center
+   dot; overall opacity is set per-dot in JS so nearer previews are stronger. */
+#previews { position: absolute; inset: 0; pointer-events: none; }
+.preview-dot { position: absolute; width: 0; height: 0; pointer-events: none; }
+.preview-dot .pdot {
+  position: absolute;
+  left: -2.5px;
+  top: -2.5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--live);
+}
+.preview-dot .pring {
+  position: absolute;
+  left: -8px;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--live);
+  border-radius: 50%;
+}
+.preview-dot .pring2 {
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  width: 26px;
+  height: 26px;
+  border: 1.5px solid var(--live);
+  border-radius: 50%;
+  opacity: .5;
+}
+
+/* ---- tap feedback (touch mode): a ring that pops at the tap point ---- */
+
+.tap-flash { position: absolute; width: 0; height: 0; pointer-events: none; }
+.tap-flash::after {
+  content: '';
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--live);
+  animation: tap-pop .38s ease-out forwards;
+}
+.tap-flash.miss::after { border-color: var(--err); }
+@keyframes tap-pop {
+  0%   { opacity: .9; transform: scale(.4); }
+  100% { opacity: 0;  transform: scale(2.6); }
 }
 
 /* ---- loupe ---- */
