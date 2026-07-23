@@ -26,6 +26,11 @@ const ENV_META = {
     desc: 'say the sounds — recognized on-device from your own calibrated voice; latency is the enemy',
     href: 'voice-babble/',
   },
+  'beat-hands': {
+    name: 'beat-hands',
+    desc: 'Beat Saber, honestly scored: paced notes, webcam swipes — can deep lookahead beat self-pacing?',
+    href: 'beat-hands/',
+  },
 };
 
 // Off-brief environments hidden from the app (code kept on disk for
@@ -127,6 +132,9 @@ function configSummary(variantId) {
   if (v.environment === 'voice-babble') {
     return (c.symbol_set || '') + ' · N=' + c.alphabet_size;
   }
+  if (v.environment === 'beat-hands') {
+    return '2×' + c.directions + ' · ' + c.tempo_npm + '/min · ' + (c.input || 'camera');
+  }
   return variantId.slice(0, 8);
 }
 
@@ -172,6 +180,7 @@ function bitsLabel(env) {
   if (env === 'stream-typing') return 'N=27 · 4.70 bits/sel';
   if (env === 'pixel-lens') return 'N = your viewport';
   if (env === 'voice-babble') return 'N=6–26 · your voice';
+  if (env === 'beat-hands') return 'N=8–16 · paced';
   return '';
 }
 

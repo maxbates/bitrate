@@ -5,3 +5,4 @@ bin/
 __pycache__/
 lab/.venv/
 .gstack/
+.claude/worktrees/
