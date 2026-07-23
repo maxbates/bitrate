@@ -101,6 +101,16 @@ body {
   gap: 1.6rem;
 }
 #res-hero { text-align: center; }
+#res-video-wrap { text-align: center; }
+#res-video {
+  max-width: min(640px, 76vw);
+  border: 1px solid var(--faint);
+  border-radius: 10px;
+  display: block;
+}
+#res-video-wrap figcaption { margin-top: 8px; font-size: 12px; }
+#res-video-wrap a { color: var(--dim); text-decoration: none; }
+#res-video-wrap a:hover { color: var(--fg); }
 .res-title { color: var(--dim); font-size: 13px; letter-spacing: .15em; text-transform: uppercase; }
 .res-bps { font-size: 64px; margin-top: .6rem; }
 .res-bps span { font-size: 20px; color: var(--dim); }

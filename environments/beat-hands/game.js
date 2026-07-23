@@ -34,7 +34,7 @@ const TRAVEL_MS = 2400;   // spawn -> hit line; lookahead depth = TRAVEL/beat no
 const COUNTIN_MS = 2400;  // armed lead-in before note 0 arrives
 const SENS = { high: 0.015, med: 0.03, low: 0.06 }; // motion-energy onset (fraction of half-frame pixels)
 
-const S = { input: 'camera', dirs: 4, tempo: 90, window: 300, tick: 'on', sens: 'med' };
+const S = { input: 'camera', dirs: 4, tempo: 90, window: 300, tick: 'on', sens: 'med', rec: 'overlay' };
 
 function loadSettings() {
   try {
@@ -45,6 +45,8 @@ function loadSettings() {
     if ([200, 300, 400].includes(s.window)) S.window = s.window;
     if (s.tick === 'on' || s.tick === 'off') S.tick = s.tick;
     if (SENS[s.sens]) S.sens = s.sens;
+    if (['overlay', 'camera', 'off'].includes(s.rec)) S.rec = s.rec;
+    else if (s.rec === 'on') S.rec = 'overlay'; // pre-toggle settings
   } catch { /* fine */ }
   if (S.input === 'keys') S.dirs = 4; // keys mode has no diagonal keys
 }
@@ -209,6 +211,7 @@ function setState(next) {
 function beginScored() {
   run.started = true;
   setState('scored');
+  startRec();
   endTimer = setTimeout(endScoredRun, run.t0 + DURATION_MS - performance.now());
 }
 
@@ -234,6 +237,8 @@ async function finishBout() {
 function endScoredRun() {
   endTimer = null;
   clearEscPending();
+  $('res-video-wrap').hidden = true;
+  stopRec(showRecording);
   sweepMisses(run.t0 + DURATION_MS + 1); // all windows closed by now (noteCount cap)
   setState('done');
   renderResults({ waiting: true });
@@ -246,6 +251,7 @@ function abortScoredRun(reason) {
   if (endTimer) { clearTimeout(endTimer); endTimer = null; }
   clearEscPending();
   run.flags[reason === 'aborted' ? 'aborted' : reason] = true;
+  discardRec();
   run.submitted = run.submitted || !run.started;
   if (!run.submitted) submitRun(true).catch(() => {});
   run = null;
@@ -484,6 +490,73 @@ function quantizeDir(dx, dy) {
   return { dir, conf: Math.round((1 - Math.abs(offset) / (sw / 2)) * 1000) / 1000 };
 }
 
+// ---- run recording: the composited canvas (camera + highway), scored
+// runs only. canvas.captureStream feeds MediaRecorder while the DSP
+// recognizer keeps reading its own 96x54 proc frame — fully independent.
+// Local-only (spec §6): the file leaves the browser only via the download
+// link. Not part of the variant config: recording doesn't alter the task.
+
+let recorder = null, recChunks = [], recUrl = null;
+
+function recMime() {
+  if (typeof MediaRecorder === 'undefined') return null;
+  for (const m of ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']) {
+    if (MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return null;
+}
+
+function startRec() {
+  if (S.input !== 'camera' || S.rec === 'off' || !camOK) return;
+  const mime = recMime();
+  if (!mime) return;
+  // Source is a setting: the composited game view (canvas), or the raw
+  // unmirrored camera feed with no overlay.
+  const src = S.rec === 'camera' ? video.srcObject : fieldEl.captureStream(30);
+  try {
+    recorder = new MediaRecorder(src, {
+      mimeType: mime,
+      videoBitsPerSecond: 2_500_000,
+    });
+  } catch { recorder = null; return; }
+  recChunks = [];
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+  recorder.start(1000);
+}
+
+function stopRec(onReady) {
+  if (!recorder) { onReady(null); return; }
+  const r = recorder;
+  recorder = null;
+  r.onstop = () => {
+    if (!recChunks.length) { onReady(null); return; }
+    if (recUrl) URL.revokeObjectURL(recUrl);
+    recUrl = URL.createObjectURL(new Blob(recChunks, { type: r.mimeType }));
+    recChunks = [];
+    onReady(recUrl);
+  };
+  try { r.stop(); } catch { onReady(null); }
+}
+
+function discardRec() {
+  if (!recorder) return;
+  const r = recorder;
+  recorder = null;
+  r.onstop = () => { recChunks = []; };
+  try { r.stop(); } catch { /* fine */ }
+}
+
+function showRecording(url) {
+  if (state !== 'done') return; // player already re-armed; keep it quiet
+  const wrap = $('res-video-wrap');
+  if (!url) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  $('res-video').src = url;
+  const cs = scoreWith(run, CONFIG.duration_s);
+  $('res-video-dl').href = url;
+  $('res-video-dl').download = 'beat-hands-' + cs.bps.toFixed(2) + 'bps.webm';
+}
+
 // ---- keyboard: strokes (keys mode), arm / abort / sheet ----
 
 const KEYMAP_L = { w: 0, d: 1, s: 2, a: 3 };
@@ -651,6 +724,7 @@ function frame() {
   drawNotes(now);
   drawFeedback(now);
   drawTrail();
+  if (recorder && state === 'scored') drawRecDot(now);
   if (state === 'armed') drawCountIn(now);
   if (S.input !== 'camera') drawKeysHint();
 }
@@ -867,6 +941,19 @@ function drawTrail() {
   ctx.globalAlpha = 1;
 }
 
+function drawRecDot(now) {
+  ctx.globalAlpha = 0.55 + 0.45 * Math.sin(now / 350);
+  ctx.fillStyle = '#e05252';
+  ctx.beginPath();
+  ctx.arc(W / 2 - 52, 27, 5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.font = '12px ui-monospace, Menlo, monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#8a9199';
+  ctx.fillText('rec · stays local', W / 2 - 40, 31);
+}
+
 function drawCountIn(now) {
   const sLeft = Math.ceil((run.t0 - now) / 1000);
   if (sLeft <= 0) return;
@@ -1058,8 +1145,10 @@ function syncSheet() {
   segSync('seg-window', S.window);
   segSync('seg-tick', S.tick);
   segSync('seg-sens', S.sens);
+  segSync('seg-rec', S.rec);
   $('seg-dirs').querySelector('[data-v="8"]').disabled = S.input === 'keys';
   $('row-sens').hidden = S.input !== 'camera';
+  $('row-rec').hidden = S.input !== 'camera';
   $('sheet-info').textContent =
     'N=' + N + ' · ' + BITS.toFixed(2) + ' bits/selection · window ±' + WIN_MS +
     ' ms effective · ' + Math.round(TRAVEL_MS / BEAT_MS * 10) / 10 + ' notes visible · changes restart the bout';
@@ -1090,6 +1179,7 @@ bindSeg('seg-tempo', (v) => { S.tempo = Number(v); });
 bindSeg('seg-window', (v) => { S.window = Number(v); });
 bindSeg('seg-tick', (v) => { S.tick = v; });
 bindSeg('seg-sens', (v) => { S.sens = v; });
+bindSeg('seg-rec', (v) => { S.rec = v; });
 
 // Live motion readout while the sheet is open — is "didn't register" a
 // trigger-threshold problem? (the mic-stats pattern)

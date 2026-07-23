@@ -29,6 +29,12 @@
 
   <section id="results" hidden>
     <div id="res-hero"></div>
+    <!-- Scored-run recording (camera input): the composited canvas replayed.
+         Local-only — the file leaves the browser only via the download link. -->
+    <figure id="res-video-wrap" hidden>
+      <video id="res-video" controls loop playsinline></video>
+      <figcaption><a id="res-video-dl" download>⬇ download your run — stays on this machine until you share it</a></figcaption>
+    </figure>
     <div id="res-tiles"></div>
     <div id="res-charts">
       <figure>
@@ -85,6 +91,14 @@
       <span class="sh-label">metronome</span>
       <div class="seg" id="seg-tick">
         <button data-v="on">tick</button>
+        <button data-v="off">off</button>
+      </div>
+    </div>
+    <div class="sh-row" id="row-rec">
+      <span class="sh-label">record runs</span>
+      <div class="seg" id="seg-rec">
+        <button data-v="overlay">game + camera</button>
+        <button data-v="camera">camera only</button>
         <button data-v="off">off</button>
       </div>
     </div>
