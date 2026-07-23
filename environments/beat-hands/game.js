@@ -355,7 +355,7 @@ async function camInit() {
   camWanted = true;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 320, height: 240, facingMode: 'user' },
+      video: { width: 640, height: 480, facingMode: 'user' },
     });
     video.srcObject = stream;
     await video.play();
@@ -612,7 +612,9 @@ function layout() {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
 
-function laneX(hand) { return hand === 0 ? W * 0.34 : W * 0.66; }
+function laneX(hand) { return hand === 0 ? W * 0.3 : W * 0.7; } // near where hands sit on camera
+
+function hitR() { return Math.min(W * 0.07, 64); }
 
 function project(hand, p) {
   // Constant world velocity toward the camera: z linear in (1-p), screen
@@ -622,7 +624,7 @@ function project(hand, p) {
   return {
     x: vx + (laneX(hand) - vx) / z,
     y: vy + (hy - vy) / z,
-    s: Math.min(W * 0.085, 84) / z,
+    s: Math.min(W * 0.13, 132) / z,
   };
 }
 
@@ -644,13 +646,70 @@ function frame() {
   }
 
   ctx.clearRect(0, 0, W, H);
+  if (S.input === 'camera') drawCamBackdrop();
   drawHighway();
   drawNotes(now);
   drawFeedback(now);
   drawTrail();
   if (state === 'armed') drawCountIn(now);
-  if (S.input === 'camera') drawPreview();
-  else drawKeysHint();
+  if (S.input !== 'camera') drawKeysHint();
+}
+
+// The webcam IS the stage: full-screen mirrored feed, dimmed under the
+// highway, with the motion mask shimmering on top — your hands visually
+// line up with the lanes they control.
+function drawCamBackdrop() {
+  if (camOK && video.videoWidth) {
+    const scale = Math.max(W / video.videoWidth, H / video.videoHeight); // cover-fit
+    const dw = video.videoWidth * scale, dh = video.videoHeight * scale;
+    const dx = (W - dw) / 2, dy = (H - dh) / 2;
+    ctx.save();
+    ctx.translate(W, 0);
+    ctx.scale(-1, 1); // mirror to match proc space: your left hand, left half
+    ctx.drawImage(video, W - dx - dw, dy, dw, dh);
+    ctx.restore();
+    ctx.fillStyle = 'rgba(16, 18, 22, 0.62)'; // dim so notes stay readable
+    ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = 0.3;
+    ctx.drawImage(motCanvas, dx, dy, dw, dh); // motion shimmer, already mirrored
+    ctx.restore();
+  } else {
+    ctx.fillStyle = '#565c66';
+    ctx.font = '13px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('no camera — allow access and reload, or switch to keys in ⚙', W / 2, H - 24);
+  }
+  // faint center divider: the hand-half boundary
+  ctx.strokeStyle = 'rgba(86, 92, 102, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([2, 8]);
+  ctx.beginPath();
+  ctx.moveTo(W / 2, H * 0.08);
+  ctx.lineTo(W / 2, H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if (camOK) {
+    // live energy bars at the screen edges, threshold marker at 1/3
+    const on = SENS[S.sens];
+    const bh0 = H * 0.3, by = H * 0.6;
+    for (const [i, e] of [[0, level.l], [1, level.r]]) {
+      const bx = i === 0 ? 10 : W - 18;
+      const bh = Math.min(1, e / (on * 3)) * bh0;
+      ctx.fillStyle = e > on ? '#58b368' : 'rgba(86, 92, 102, 0.8)';
+      ctx.fillRect(bx, by + bh0 - bh, 8, bh);
+      ctx.strokeStyle = '#565c66';
+      ctx.beginPath();
+      ctx.moveTo(bx - 2, by + bh0 * (2 / 3));
+      ctx.lineTo(bx + 10, by + bh0 * (2 / 3));
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(86, 92, 102, 0.9)';
+    ctx.font = '11px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('video stays on this machine', W / 2, H - 10);
+  }
 }
 
 function drawHighway() {
@@ -674,13 +733,13 @@ function drawHighway() {
     ctx.globalAlpha = 0.65;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(laneX(hand), hy, Math.min(W * 0.05, 46), 0, Math.PI * 2);
+    ctx.arc(laneX(hand), hy, hitR(), 0, Math.PI * 2);
     ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.fillStyle = '#565c66';
     ctx.font = '12px ui-monospace, Menlo, monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(hand === 0 ? 'left hand' : 'right hand', laneX(hand), hy + Math.min(W * 0.05, 46) + 18);
+    ctx.fillText(hand === 0 ? 'left hand' : 'right hand', laneX(hand), hy + hitR() + 18);
   }
 }
 
@@ -752,7 +811,7 @@ function drawFeedback(now) {
       ctx.strokeStyle = '#58b368';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(x, hy, Math.min(W * 0.05, 46) + age * 16, 0, Math.PI * 2);
+      ctx.arc(x, hy, hitR() + age * 16, 0, Math.PI * 2);
       ctx.stroke();
     } else if (f.kind === 'miss') {
       ctx.strokeStyle = '#e05252';
@@ -765,16 +824,16 @@ function drawFeedback(now) {
       ctx.lineWidth = 1.6;
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
-      ctx.arc(x, hy - 62, 20, 0, Math.PI * 2);
+      ctx.arc(x, hy - 84, 26, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
       if (f.heard !== null) {
-        drawArrow(x, hy - 62, 22, (f.heard % S.dirs) * (360 / S.dirs), '#e05252');
+        drawArrow(x, hy - 84, 28, (f.heard % S.dirs) * (360 / S.dirs), '#e05252');
       }
       ctx.fillStyle = '#e05252';
       ctx.font = '11px ui-monospace, Menlo, monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(f.kind === 'early' ? 'early' : ('heard ' + symName(f.heard) + ' · ' + f.conf.toFixed(2)), x, hy - 30);
+      ctx.fillText(f.kind === 'early' ? 'early' : ('heard ' + symName(f.heard) + ' · ' + f.conf.toFixed(2)), x, hy - 46);
     }
   }
   ctx.globalAlpha = 1;
@@ -808,52 +867,6 @@ function drawCountIn(now) {
   ctx.font = '64px ui-monospace, Menlo, monospace';
   ctx.textAlign = 'center';
   ctx.fillText(String(sLeft), W / 2, H * 0.45);
-}
-
-function drawPreview() {
-  const pw = 180, ph = Math.round(pw * PROC_H / PROC_W);
-  const px = W / 2 - pw / 2, py = H - ph - 14;
-  ctx.save();
-  ctx.imageSmoothingEnabled = false;
-  ctx.globalAlpha = camOK ? 0.85 : 0.3;
-  if (camOK) {
-    ctx.drawImage(procCanvas, px, py, pw, ph);
-    ctx.drawImage(motCanvas, px, py, pw, ph);
-  }
-  ctx.restore();
-  ctx.strokeStyle = '#2a2e36';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(px, py, pw, ph);
-  ctx.beginPath();
-  ctx.moveTo(px + pw / 2, py);
-  ctx.lineTo(px + pw / 2, py + ph);
-  ctx.stroke();
-  ctx.fillStyle = '#565c66';
-  ctx.font = '10px ui-monospace, Menlo, monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('L', px + pw * 0.25, py + 11);
-  ctx.fillText('R', px + pw * 0.75, py + 11);
-  if (!camOK) {
-    ctx.fillText('no camera', px + pw / 2, py + ph / 2 + 3);
-  } else {
-    // live energy bars vs trigger threshold
-    const on = SENS[S.sens];
-    for (const [i, e] of [[0, level.l], [1, level.r]]) {
-      const bx = px + (i === 0 ? -10 : pw + 4);
-      const bh = Math.min(1, e / (on * 3)) * ph;
-      ctx.fillStyle = e > on ? '#58b368' : '#565c66';
-      ctx.fillRect(bx, py + ph - bh, 6, bh);
-      ctx.strokeStyle = '#2a2e36';
-      const ty = py + ph - (1 / 3) * ph; // threshold marker at on/(on*3)
-      ctx.beginPath();
-      ctx.moveTo(bx - 1, ty);
-      ctx.lineTo(bx + 7, ty);
-      ctx.stroke();
-    }
-  }
-  ctx.fillStyle = '#565c66';
-  ctx.font = '11px ui-monospace, Menlo, monospace';
-  ctx.fillText('video stays on this machine', W / 2, py + ph + 14);
 }
 
 function drawKeysHint() {
