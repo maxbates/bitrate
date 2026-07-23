@@ -57,12 +57,46 @@ func main() {
 
 	// Print the URL prominently first, then try the browser. Browser-launch
 	// is best-effort, never load-bearing (spec §8).
-	fmt.Printf("\n  bit-rate harness\n\n  ▶  %s\n\n  (paste the URL into a browser if one doesn't open)\n\n", url)
-	if !*noBrowser {
+	fmt.Printf("\n  bit-rate harness\n\n  ▶  %s\n", url)
+	// When bound to a wildcard address (e.g. -addr :4700), also print the LAN
+	// URLs so a phone or tablet on the same WiFi can reach it — pixel-lens
+	// touch mode is the motivating case. No camera/mic there, so plain HTTP is
+	// fine; getUserMedia modes would need a secure context and are localhost-only.
+	if host, port, splitErr := net.SplitHostPort(*addr); splitErr == nil && (host == "" || host == "0.0.0.0" || host == "::") {
+		for _, ip := range lanIPs() {
+			fmt.Printf("  ▶  http://%s:%s/  (same-WiFi devices — e.g. iPad, touch mode)\n", ip, port)
+		}
+	}
+	fmt.Printf("\n  (paste the URL into a browser if one doesn't open)\n\n")
+	// BITRATE_NO_BROWSER lets test harnesses that exec run.sh (which passes no
+	// flags) suppress the courtesy browser-open without editing the grader path.
+	if !*noBrowser && os.Getenv("BITRATE_NO_BROWSER") == "" {
 		go openBrowser(url)
 	}
 
 	log.Fatal(http.Serve(ln, srv.routes()))
+}
+
+// lanIPs returns this host's private IPv4 addresses (non-loopback), best-effort,
+// so the startup banner can print same-WiFi URLs. Failure yields an empty list.
+func lanIPs() []string {
+	var out []string
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return out
+	}
+	for _, a := range addrs {
+		ipn, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip := ipn.IP.To4()
+		if ip == nil || ip.IsLoopback() || !ip.IsPrivate() {
+			continue
+		}
+		out = append(out, ip.String())
+	}
+	return out
 }
 
 // openBrowser is best-effort: xdg-open on Linux (the supported platform),

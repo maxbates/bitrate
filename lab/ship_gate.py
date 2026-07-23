@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -62,6 +63,7 @@ def main() -> int:
         proc = subprocess.Popen(
             ["bash", "run.sh"], cwd=tmp,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            env={**os.environ, "BITRATE_NO_BROWSER": "1"},  # don't pop a tab during the gate
         )
         url = None
         deadline = time.time() + 30
