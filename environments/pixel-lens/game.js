@@ -27,17 +27,39 @@ const SETTINGS_KEY = 'bitrate_pixel_settings_v1';
 const DEFAULT_CELL_MM = 5;
 
 // Input mode drives cell-size options, loupe presence, and grid inset.
-//   mouse — fine cells + hover-driven fisheye loupe (the original mode).
-//   touch — finger-sized cells, no loupe: a touchscreen has no hover, so you
-//           tap the target directly (an iPad on the same WiFi, say). Same grid,
-//           same honest-N accounting; the mode is part of the variant identity,
-//           so mouse-vs-touch is a within-environment leaderboard comparison.
-const CELL_OPTS = { mouse: [3, 5, 7.5, 10], touch: [12, 16, 20, 25] };
-const DEFAULT_CELL = { mouse: 5, touch: 20 };
+//   mouse  — fine cells + hover-driven fisheye loupe (the original mode).
+//   touch  — finger-sized cells, no loupe: a touchscreen has no hover, so you
+//            tap the target directly (an iPad on the same WiFi, say). Same grid,
+//            same honest-N accounting; the mode is part of the variant identity,
+//            so mouse-vs-touch is a within-environment leaderboard comparison.
+//   hybrid — touch WITH the loupe, resolved by take-off selection: finger-down
+//            summons the lens (and drags it), and the LIFT is the selection.
+//            This is what recovers hover on a touchscreen — the press is the
+//            "hover", so a finger can aim below its own contact width instead of
+//            committing blind under its own fingertip. The lens is drawn offset
+//            above the finger (see loupeAnchor) because a lens centered under
+//            the fingertip magnifies the one spot the finger is covering.
+//            Cell options match `touch` exactly, so hybrid-vs-touch is a paired
+//            comparison at every cell size — the point of building it.
+// The touch list runs below finger-contact width (8/10 mm vs a ~9 mm pad) on
+// purpose: the owner's touch runs showed a flat speed–information plateau, so
+// the open question is whether more N is free or whether sub-finger cells buy
+// bits back in misses. These are the variants that answer it — on an 11″ iPad
+// 8 mm is N 819 (9.68 bits/tap) and 10 mm is N 510 (8.99), against 20 mm's
+// N 120 (6.89). See spec §5 pixel-lens, "sub-finger touch cells".
+const CELL_OPTS = {
+  mouse: [3, 5, 7.5, 10],
+  touch: [8, 10, 12, 16, 20, 25],
+  hybrid: [8, 10, 12, 16, 20, 25],
+};
+// hybrid defaults finer than touch: the lens is the whole reason to expect a
+// sub-fingertip cell to be hittable, so the default should exercise it.
+const DEFAULT_CELL = { mouse: 5, touch: 20, hybrid: 12 };
+const INPUT_MODES = ['mouse', 'touch', 'hybrid'];
 const CELL_MIN = 2, CELL_MAX = 30;
 const MAX_PREVIEW = 4;
 
-let inputMode = 'mouse';   // 'mouse' | 'touch'
+let inputMode = 'mouse';   // 'mouse' | 'touch' | 'hybrid'
 let previewDepth = 0;      // look-ahead: upcoming targets shown as dimmer dots
 let cellMm = DEFAULT_CELL_MM;
 let zoomMode = 'auto'; // 'auto' (25mm apparent) or a fixed multiplier
@@ -49,7 +71,7 @@ let lensMag = 5; // center magnification; falls off to 1 at the rim
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    if (s.input === 'mouse' || s.input === 'touch') inputMode = s.input;
+    if (INPUT_MODES.includes(s.input)) inputMode = s.input;
     if (typeof s.cell_mm === 'number' && s.cell_mm >= CELL_MIN && s.cell_mm <= CELL_MAX) cellMm = s.cell_mm;
     if (s.zoom === 'auto' || (typeof s.zoom === 'number' && s.zoom >= 2 && s.zoom <= 8)) zoomMode = s.zoom;
     if (typeof s.lens_r === 'number' && s.lens_r >= 60 && s.lens_r <= 180) loupeR = s.lens_r;
@@ -122,13 +144,20 @@ let mouse = { x: -1000, y: -1000, inField: false };
 // ---- config from viewport ----
 
 function buildConfig() {
-  const loupeOn = inputMode === 'mouse';
+  const loupeOn = inputMode !== 'touch';
   const cell = Math.max(6, Math.round(cellMm * PX_PER_MM));
   const r = fieldEl.getBoundingClientRect();
-  // Inset the grid from the field edges. Mouse mode keeps a lens-radius margin
-  // so the loupe is never buried more than ~40% at a boundary target; touch
-  // has no loupe, so a half-cell finger margin is enough and the grid fills more.
-  const pad = loupeOn ? Math.round(loupeR * 0.6) : Math.round(cell * 0.5);
+  // Inset the grid from the field edges. MOUSE keeps a lens-radius margin so the
+  // loupe is never buried more than ~40% at a boundary target. TOUCH has no
+  // loupe, so a half-cell finger margin is enough. HYBRID has a loupe but draws
+  // it offset and clamped inside the field (loupeAnchor), so it doesn't need the
+  // lens-sized margin either — it insets like touch.
+  // On a small screen (tablet/phone) a desktop-sized margin costs a large share
+  // of the grid, so recover 40% of it there: the play area is the scarce
+  // resource on an 11" iPad, not the bezel clearance.
+  const smallScreen = Math.min(window.innerWidth, window.innerHeight) < 900;
+  const padBase = inputMode === 'mouse' ? loupeR * 0.6 : cell * 0.5;
+  const pad = Math.max(2, Math.round(padBase * (smallScreen ? 0.6 : 1)));
   const cols = Math.max(2, Math.floor((r.width - 2 * pad) / cell));
   const rows = Math.max(2, Math.floor((r.height - 2 * pad) / cell));
   const ox = Math.round((r.width - cols * cell) / 2);
@@ -141,9 +170,11 @@ function buildConfig() {
   ga.style.height = (rows * cell) + 'px';
   ga.style.backgroundSize = cell + 'px ' + cell + 'px';
   applyLoupeSize();
-  // Touch has no cursor to hide; mouse hides it so the loupe *is* the cursor.
-  fieldEl.style.cursor = loupeOn ? 'none' : 'auto';
-  if (!loupeOn) loupeEl.hidden = true;
+  // Mouse hides the cursor so the loupe *is* the cursor. Touch has no cursor to
+  // hide, and hybrid's lens only exists while a finger is down — hiding the
+  // cursor there would leave nothing to aim with between selections.
+  fieldEl.style.cursor = inputMode === 'mouse' ? 'none' : 'auto';
+  if (inputMode !== 'mouse') loupeEl.hidden = true;
   // Center magnification: auto targets ~ZOOM_TARGET_MM apparent size,
   // tapering to 1x at the rim (see drawLoupe); or a fixed multiplier.
   lensMag = zoomMode === 'auto'
@@ -161,6 +192,17 @@ function buildConfig() {
     input: inputMode,
     loupe: loupeOn ? 'on' : 'off',
     preview: previewDepth,
+    // The look-ahead *grammar* is part of the task, so a change to it must be a
+    // new variant: v1 ranked previews by opacity alone, v2 by tile/size/path
+    // (2026-07-24), and runs under the two are not comparable. Emitted only when
+    // previews are on, so preview:0 variants keep their existing config hash and
+    // their existing leaderboard history.
+    ...(previewDepth ? { preview_style: 'rank-tile-path-v2' } : {}),
+    // How a selection is committed. Press-to-select is the original behaviour for
+    // both mouse and touch; hybrid commits on the LIFT, which is a different task
+    // (you may re-aim while pressed), so it must not share a variant with them.
+    // Emitted only for hybrid, so existing mouse/touch hashes are unchanged.
+    ...(inputMode === 'hybrid' ? { commit: 'lift', recognizer: 'touch-loupe-takeoff-v1' } : {}),
     loupe_r_px: loupeOn ? loupeR : 0,
     loupe_mag: loupeOn ? Math.round(lensMag * 100) / 100 : 0,
     loupe_zoom_mode: loupeOn ? String(zoomMode) : 'off',
@@ -177,7 +219,9 @@ function buildConfig() {
   $('res-info').innerHTML =
     '<b>' + CONFIG.viewport_w + '×' + CONFIG.viewport_h + '</b> px · ' +
     '<b>' + cols + '×' + rows + '</b> cells of ' + cellMm + ' mm' +
-    (loupeOn ? ' (~' + Math.round(cellMm * lensMag) + ' mm in lens)' : ' · touch') +
+    (loupeOn ? ' (~' + Math.round(cellMm * lensMag) + ' mm in lens)' : '') +
+    // Kept terse: the header band already overflows on tablet widths (spec §4.3.1).
+    (inputMode === 'touch' ? ' · touch' : inputMode === 'hybrid' ? ' · lift' : '') +
     ' · N=<b>' + N + '</b> · <b>' + BITS.toFixed(2) + '</b> bits/selection' +
     (previewDepth ? ' · look-ahead <b>' + previewDepth + '</b>' : '');
 }
@@ -286,20 +330,40 @@ function placeTarget() {
 // without leaking bits (targets stay i.i.d. uniform over N).
 
 const previewLayer = $('previews');
+const previewPath = $('preview-path');
 let previewEls = [];
+
+// Rank encoding (see game.css). Each rank gets its own FORM — filled tile, open
+// ring, solid disc — because at an 8 mm cell a pure size ramp is only a few
+// pixels per step. Size (--scale, as a fraction of a cell) and opacity still
+// decrease monotonically on top of the form, so "sooner" is bigger, brighter,
+// and a different shape all at once; no single cue has to carry the order.
+const PREVIEW_SCALE = [1, 0.60, 0.34, 0.22];
+const PREVIEW_ALPHA = [0.95, 0.72, 0.56, 0.40];
+// Diameter of the center mark per rank: an anchor dot under the tile/ring, and
+// the entire mark from rank 3 on.
+const PREVIEW_DOT = [0.10, 0.12, 0.34, 0.22];
 
 function ensurePreviewPool(n) {
   while (previewEls.length < n) {
     const el = document.createElement('div');
     el.className = 'preview-dot';
     el.hidden = true;
-    el.innerHTML = '<div class="pring2"></div><div class="pring"></div><div class="pdot"></div>';
+    el.innerHTML = '<div class="ptile"></div><div class="pring"></div><div class="pdot"></div>';
     previewLayer.appendChild(el);
     previewEls.push(el);
   }
 }
 
 function placePreviews() {
+  const cell = grid.cell;
+  // Path nodes carry a radius so the dashed line can stop short of each mark
+  // instead of running through it (that clutter read as an arrowhead on device).
+  // Path starts at the live target so the very first hop is drawn, not implied.
+  const pts = [];
+  if (run && state !== 'done' && run.pos < run.seq.length) {
+    pts.push({ ...cellCenter(run.seq[run.pos]), r: cell * 0.58 });
+  }
   for (let k = 0; k < previewEls.length; k++) {
     const el = previewEls[k];
     const seqIdx = run ? run.pos + 1 + k : -1;
@@ -308,44 +372,88 @@ function placePreviews() {
       continue;
     }
     const c = cellCenter(run.seq[seqIdx]);
+    const rank = Math.min(PREVIEW_SCALE.length, k + 1);
+    el.className = 'preview-dot r' + rank;
     el.style.left = c.x + 'px';
     el.style.top = c.y + 'px';
-    // Nearer previews a touch stronger; all dimmer than the solid live cell.
-    el.style.opacity = String(Math.max(0.28, 0.72 - k * 0.18));
+    el.style.setProperty('--cell', cell + 'px');
+    el.style.setProperty('--scale', String(PREVIEW_SCALE[rank - 1]));
+    // Center mark scales with the cell but stays visible in the smallest cells.
+    el.style.setProperty('--pdot', Math.max(3, Math.round(cell * PREVIEW_DOT[rank - 1])) + 'px');
+    el.style.opacity = String(PREVIEW_ALPHA[rank - 1]);
     el.hidden = false;
+    // Path gap: the tile's half-width at rank 1, the mark's radius beyond it.
+    pts.push({ ...c, r: (rank === 1 ? cell * 0.58 : (PREVIEW_SCALE[rank - 1] * cell) / 2 + 4) });
   }
+  drawPreviewPath(pts);
+}
+
+// Dashed polyline through the targets in order: the cue that makes "which one
+// is next" explicit instead of a judgement about relative brightness. Segments
+// fade with depth, so the path itself also reads directionally.
+function drawPreviewPath(pts) {
+  if (pts.length < 2) { previewPath.innerHTML = ''; return; }
+  let svg = '';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    // Clip the segment to the gap between the two marks; adjacent cells leave
+    // nothing to draw, which is correct — the marks already touch.
+    if (len <= a.r + b.r + 6) continue;
+    const ux = dx / len, uy = dy / len;
+    const x1 = a.x + ux * a.r, y1 = a.y + uy * a.r;
+    const x2 = b.x - ux * b.r, y2 = b.y - uy * b.r;
+    const op = Math.max(0.14, 0.42 - i * 0.1);
+    // Stroke/width/dash live in CSS (a var() in a presentation attribute is not
+    // dependable in Safari, and this runs on iPad); only geometry is inline.
+    svg += '<line x1="' + x1.toFixed(1) + '" y1="' + y1.toFixed(1) +
+      '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1) +
+      '" opacity="' + op.toFixed(2) + '"/>';
+  }
+  previewPath.innerHTML = svg;
 }
 
 function hidePreviews() {
   for (const el of previewEls) el.hidden = true;
+  previewPath.innerHTML = '';
 }
 
-// ---- selection: mousedown is the earliest pointer event ----
+// ---- selection ----
+// mouse/touch commit on the press (the earliest pointer event). hybrid commits
+// on the LIFT: the press is the aim (it summons and drags the lens), so the
+// press must not consume the target. Everything below the guard is shared.
 
-fieldEl.addEventListener('pointerdown', (e) => {
-  e.preventDefault();
-  if (!e.isPrimary) return;                                // ignore extra fingers
-  if (e.pointerType === 'mouse' && e.button !== 0) return; // left button only
-  if (sheetOpen) closeSheet(); // a field click means "back to playing"
-  if (state !== 'practice' && state !== 'armed' && state !== 'scored') return;
-  if (run.scored && run.started && e.timeStamp - run.t0 >= DURATION_MS) return;
+let pressing = false; // hybrid: a finger/button is down and aiming
 
-  clearEscPending();
-  if (!run.started) {
-    // Timer starts on the first selection, not page load (spec §2.5).
-    run.started = true;
-    run.t0 = e.timeStamp;
-    if (!run.scored) {
-      modeBanner.className = 'mode-practice-live';
-    } else {
-      setState('scored');
-      endTimer = setTimeout(endScoredRun, run.t0 + DURATION_MS - performance.now());
-    }
+// True when the run can still accept a selection right now.
+function canSelect(tStamp) {
+  if (state !== 'practice' && state !== 'armed' && state !== 'scored') return false;
+  if (run.scored && run.started && tStamp - run.t0 >= DURATION_MS) return false;
+  return true;
+}
+
+// Timer starts on the first selection, not page load (spec §2.5) — in hybrid
+// that is the first lift, which is the first event that transmits anything.
+function startClock(tStamp) {
+  if (run.started) return;
+  run.started = true;
+  run.t0 = tStamp;
+  if (!run.scored) {
+    modeBanner.className = 'mode-practice-live';
+  } else {
+    setState('scored');
+    endTimer = setTimeout(endScoredRun, run.t0 + DURATION_MS - performance.now());
   }
-  const t = e.timeStamp - run.t0;
+}
+
+function fieldPoint(e) {
   const r = fieldEl.getBoundingClientRect();
-  const x = e.clientX - r.left;
-  const y = e.clientY - r.top;
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+
+function commitSelection(x, y, tStamp) {
+  const t = tStamp - run.t0;
   const col = Math.min(grid.cols - 1, Math.max(0, Math.floor((x - grid.ox) / grid.cell)));
   const row = Math.min(grid.rows - 1, Math.max(0, Math.floor((y - grid.oy) / grid.cell)));
   const cell = row * grid.cols + col;
@@ -354,10 +462,10 @@ fieldEl.addEventListener('pointerdown', (e) => {
 
   if (verdict) run.sc++;
   else run.si++;
-  // Feedback: touch has no loupe border to flash, so pop a ring at the tap
-  // point; mouse keeps the loupe-rim flash on a miss.
-  if (inputMode === 'touch') tapFlash(x, y, verdict);
-  else if (!verdict) missFlash();
+  // Feedback: a finger has no loupe border to flash, so pop a ring at the
+  // contact point; mouse keeps the loupe-rim flash on a miss.
+  if (inputMode === 'mouse') { if (!verdict) missFlash(); }
+  else tapFlash(x, y, verdict);
 
   run.keylog.push({
     i: run.keylog.length,
@@ -365,6 +473,8 @@ fieldEl.addEventListener('pointerdown', (e) => {
     expected: String(expected),
     verdict,
     t_shown_ms: run.shownAt[run.pos] ?? 0,
+    // The selection instant: press in mouse/touch, lift in hybrid. IKI and pace
+    // are differences of this field, so it must be the moment of commitment.
     t_pressed_ms: t,
     t_keyup_ms: null,
     x,
@@ -379,12 +489,64 @@ fieldEl.addEventListener('pointerdown', (e) => {
     return;
   }
   placeTarget();
+}
+
+fieldEl.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (!e.isPrimary) return;                                // ignore extra fingers
+  if (e.pointerType === 'mouse' && e.button !== 0) return; // left button only
+  if (sheetOpen) closeSheet(); // a field click means "back to playing"
+  if (!canSelect(e.timeStamp)) return;
+
+  clearEscPending();
+
+  if (inputMode === 'hybrid') {
+    // Aim, don't select: bring the lens up under (above) the finger and follow it.
+    pressing = true;
+    // Capture so the lift is delivered here even if the finger strays over the
+    // header or off the field — otherwise a drag to the edge would swallow the
+    // selection and silently cost the player a target.
+    try { fieldEl.setPointerCapture(e.pointerId); } catch { /* not capturable */ }
+    const p = fieldPoint(e);
+    mouse.x = p.x;
+    mouse.y = p.y;
+    mouse.inField = true;
+    drawLoupe();
+    return;
+  }
+
+  startClock(e.timeStamp);
+  const p = fieldPoint(e);
+  commitSelection(p.x, p.y, e.timeStamp);
 });
 
 fieldEl.addEventListener('pointerup', (e) => {
+  if (inputMode === 'hybrid') {
+    if (!pressing) return;
+    pressing = false;
+    loupeEl.hidden = true;
+    loupeArrow.hidden = true;
+    mouse.inField = false;
+    if (!canSelect(e.timeStamp)) return;
+    // Take-off selection: the cell under the finger at the moment it leaves.
+    startClock(e.timeStamp);
+    const p = fieldPoint(e);
+    commitSelection(p.x, p.y, e.timeStamp);
+    return;
+  }
   if (!run || !run.started || !run.keylog.length) return;
   const last = run.keylog[run.keylog.length - 1];
   if (last.t_keyup_ms === null) last.t_keyup_ms = e.timeStamp - run.t0;
+});
+
+// A cancelled pointer (system gesture, palm rejection) is an aborted aim, not a
+// selection — drop it silently rather than committing wherever the finger was.
+fieldEl.addEventListener('pointercancel', () => {
+  if (inputMode !== 'hybrid') return;
+  pressing = false;
+  loupeEl.hidden = true;
+  loupeArrow.hidden = true;
+  mouse.inField = false;
 });
 
 function missFlash() {
@@ -407,7 +569,9 @@ function tapFlash(x, y, ok) {
 let rafPending = false;
 
 fieldEl.addEventListener('pointermove', (e) => {
-  if (inputMode !== 'mouse' || e.pointerType !== 'mouse') return;
+  // mouse: hover drives the lens. hybrid: only a pressed pointer does, and any
+  // pointerType counts (a finger, or a held mouse button when testing on desktop).
+  if (inputMode === 'mouse' ? e.pointerType !== 'mouse' : !(inputMode === 'hybrid' && pressing)) return;
   const r = fieldEl.getBoundingClientRect();
   mouse.x = e.clientX - r.left;
   mouse.y = e.clientY - r.top;
@@ -419,9 +583,28 @@ fieldEl.addEventListener('pointermove', (e) => {
 });
 
 fieldEl.addEventListener('pointerleave', () => {
+  if (inputMode === 'hybrid' && pressing) return; // dragging past the edge is not a lift
   mouse.inField = false;
   loupeEl.hidden = true;
 });
+
+// Where the lens is DRAWN, versus the point it magnifies (always mouse.x/y).
+// In mouse mode they're the same. In hybrid the lens is lifted clear of the
+// fingertip — a lens centred under the finger magnifies exactly the spot the
+// finger is covering, which is the whole problem it exists to solve. The
+// magnified content still centres on the contact point (and the crosshair marks
+// it), so this reads like the iOS text loupe: a window floating above the touch.
+// Clamped into the field so it never leaves the screen; near the top edge that
+// means it slides back over the finger, which is the least-bad option there.
+function loupeAnchor() {
+  if (inputMode !== 'hybrid') return { x: mouse.x, y: mouse.y };
+  const lift = loupeR + 30;
+  const m = loupeR + 4;
+  return {
+    x: Math.min(Math.max(mouse.x, m), Math.max(m, grid.w - m)),
+    y: Math.min(Math.max(mouse.y - lift, m), Math.max(m, grid.h - m)),
+  };
+}
 
 // Radial magnification profile: lensMag at the center, tapering
 // quadratically to exactly 1 at the rim — the glass edge is continuous
@@ -463,7 +646,10 @@ function drawScene(dpr, side) {
   }
   sctx.stroke();
 
-  // Look-ahead previews at 1:1, dimmer, drawn under the live target.
+  // Look-ahead previews at 1:1, drawn under the live target — same rank grammar
+  // as the field (see game.css): next = filled tile, then ring, then disc. The
+  // lens must not teach a different visual language than the field behind it,
+  // and in hybrid mode the lens is where the player actually looks.
   if (run && state !== 'done') {
     for (let k = 0; k < previewDepth; k++) {
       const si = run.pos + 1 + k;
@@ -471,17 +657,25 @@ function drawScene(dpr, side) {
       const c = cellCenter(run.seq[si]);
       const lx = c.x - mouse.x + loupeR;
       const ly = c.y - mouse.y + loupeR;
-      if (lx > -grid.cell && lx < side + grid.cell && ly > -grid.cell && ly < side + grid.cell) {
-        // green bullseye: ring + center dot, dimmer with depth
-        const a = Math.max(0.22, 0.6 - k * 0.15);
-        sctx.strokeStyle = 'rgba(88, 179, 104, ' + a + ')';
+      if (lx <= -grid.cell || lx >= side + grid.cell || ly <= -grid.cell || ly >= side + grid.cell) continue;
+      const rank = Math.min(PREVIEW_SCALE.length, k + 1);
+      const a = PREVIEW_ALPHA[rank - 1] * 0.75; // the lens is an assist, not the cue
+      sctx.strokeStyle = 'rgba(88, 179, 104, ' + a.toFixed(2) + ')';
+      sctx.fillStyle = 'rgba(88, 179, 104, ' + a.toFixed(2) + ')';
+      if (rank === 1) {
+        const half = grid.cell / 2 - 1;
+        sctx.lineWidth = 2;
+        sctx.strokeRect(lx - half, ly - half, half * 2, half * 2);
+        sctx.fillStyle = 'rgba(88, 179, 104, ' + (a * 0.32).toFixed(2) + ')';
+        sctx.fillRect(lx - half, ly - half, half * 2, half * 2);
+      } else if (rank === 2) {
         sctx.lineWidth = 2;
         sctx.beginPath();
-        sctx.arc(lx, ly, Math.max(4, grid.cell * 0.32), 0, Math.PI * 2);
+        sctx.arc(lx, ly, Math.max(4, (grid.cell * PREVIEW_SCALE[1]) / 2), 0, Math.PI * 2);
         sctx.stroke();
-        sctx.fillStyle = 'rgba(88, 179, 104, ' + a + ')';
+      } else {
         sctx.beginPath();
-        sctx.arc(lx, ly, Math.max(1.5, grid.cell * 0.1), 0, Math.PI * 2);
+        sctx.arc(lx, ly, Math.max(2, (grid.cell * PREVIEW_SCALE[rank - 1]) / 2), 0, Math.PI * 2);
         sctx.fill();
       }
     }
@@ -502,9 +696,11 @@ function drawScene(dpr, side) {
 
 function drawLoupe() {
   rafPending = false;
-  if (inputMode !== 'mouse' || !mouse.inField || fieldEl.hidden) { loupeEl.hidden = true; return; }
+  const live = inputMode === 'mouse' ? mouse.inField : (inputMode === 'hybrid' && pressing);
+  if (!live || fieldEl.hidden) { loupeEl.hidden = true; return; }
   loupeEl.hidden = false;
-  loupeEl.style.transform = 'translate(' + mouse.x + 'px,' + mouse.y + 'px)';
+  const a = loupeAnchor();
+  loupeEl.style.transform = 'translate(' + a.x + 'px,' + a.y + 'px)';
 
   const dpr = window.devicePixelRatio || 1;
   const side = loupeR * 2;
@@ -625,7 +821,7 @@ function segOn(id, pred) {
 }
 
 function syncSheet() {
-  const loupeOn = inputMode === 'mouse';
+  const loupeOn = inputMode !== 'touch';
   segOn('seg-input', (b) => b.dataset.v === inputMode);
   segOn('seg-cell', (b) => Number(b.dataset.v) === cellMm);
   segOn('seg-zoom', (b) => b.dataset.v === String(zoomMode));
@@ -638,11 +834,13 @@ function syncSheet() {
     ' bits/selection' +
     (loupeOn ? ' · lens ' + lensMag.toFixed(1) + '× / r' + loupeR +
       ' · ~' + Math.round(cellMm * lensMag) + ' mm in lens' : ' · touch, no lens') +
+    (inputMode === 'hybrid' ? ' · press to aim, lift to select' : '') +
     (previewDepth ? ' · look-ahead ' + previewDepth : '') +
     ' · changes restart the bout';
 }
 
 function segApply(mut) {
+  pressing = false; // any settings change restarts the bout; drop a stale aim
   mut();
   saveSettings();
   buildConfig();
@@ -985,7 +1183,7 @@ async function applyCfgParam() {
     const v = (data.variants || []).find((x) => x.config_hash === h);
     if (!v || v.environment !== 'pixel-lens') return;
     const c = typeof v.config === 'string' ? JSON.parse(v.config) : v.config;
-    if (c.input === 'mouse' || c.input === 'touch') inputMode = c.input;
+    if (INPUT_MODES.includes(c.input)) inputMode = c.input;
     if (typeof c.preview === 'number' && c.preview >= 0 && c.preview <= MAX_PREVIEW) previewDepth = Math.round(c.preview);
     if (typeof c.cell_mm === 'number' && c.cell_mm >= CELL_MIN && c.cell_mm <= CELL_MAX) cellMm = c.cell_mm;
     if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
@@ -1004,20 +1202,44 @@ window.pixelDebug = {
   sparkSeries: () => (run && run.started ? R.sparkSeries(run.keylog, BITS, elapsedMsOf(run)) : null),
   targetCell: () => (run && run.pos < run.seq.length ? run.seq[run.pos] : null),
   previewCount: () => previewEls.filter((e) => !e.hidden).length,
-  // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
-  // current input mode) — exercises the same handler a finger/mouse would.
+  loupeVisible: () => !loupeEl.hidden,
+  // Dispatch a real press+lift at a cell's center (pointerType defaults to the
+  // current input mode) — exercises the same handlers a finger/mouse would, in
+  // every mode: press-to-select modes commit on the down, hybrid on the up.
   tapCell: (idx, type) => {
     const c = cellCenter(idx);
     const fr = fieldEl.getBoundingClientRect();
-    fieldEl.dispatchEvent(new PointerEvent('pointerdown', {
+    const init = {
       clientX: fr.left + c.x,
       clientY: fr.top + c.y,
       button: 0,
       isPrimary: true,
-      pointerType: type || inputMode,
+      pointerType: type || (inputMode === 'mouse' ? 'mouse' : 'touch'),
       bubbles: true,
       cancelable: true,
-    }));
+    };
+    fieldEl.dispatchEvent(new PointerEvent('pointerdown', init));
+    fieldEl.dispatchEvent(new PointerEvent('pointerup', init));
+  },
+  // Hybrid: press at one cell, slide to another, lift there. The selection must
+  // be the LIFT cell — this is the test that take-off selection is wired right.
+  dragSelect: (fromIdx, toIdx) => {
+    const fr = fieldEl.getBoundingClientRect();
+    const mk = (i) => {
+      const c = cellCenter(i);
+      return {
+        clientX: fr.left + c.x,
+        clientY: fr.top + c.y,
+        button: 0,
+        isPrimary: true,
+        pointerType: 'touch',
+        bubbles: true,
+        cancelable: true,
+      };
+    };
+    fieldEl.dispatchEvent(new PointerEvent('pointerdown', mk(fromIdx)));
+    fieldEl.dispatchEvent(new PointerEvent('pointermove', mk(toIdx)));
+    fieldEl.dispatchEvent(new PointerEvent('pointerup', mk(toIdx)));
   },
 };
 

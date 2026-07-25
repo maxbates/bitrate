@@ -168,45 +168,93 @@ body.armed #field { cursor: none; }
   100% { opacity: 0;  left: -8px;   top: -8px;   width: 16px;  height: 16px; }
 }
 
-/* ---- look-ahead previews: dimmer, static bull's-eyes for upcoming targets.
-   No animation (spec §7: no decorative motion on the target stream); opacity
-   is set per-dot in JS so nearer previews read slightly stronger. Always
+/* ---- look-ahead previews: static, GREEN, and RANK-ENCODED (v2, 2026-07-24).
+   No animation (spec §7: no decorative motion on the target stream). Always
    subordinate to the live target's collapsing cue. pointer-events: none keeps
-   them non-interactive — a tap only ever resolves the live target. */
+   them non-interactive — a tap only ever resolves the live target.
 
-/* Upcoming targets read as GREEN bull's-eyes — a distinct color from the
-   yellow live cell so "next" never reads as "now". Concentric rings + center
-   dot; overall opacity is set per-dot in JS so nearer previews are stronger. */
+   v1 encoded rank in opacity alone, which failed on device: with 2–3 previews
+   up you could see the set but not read the ORDER fast enough to pre-plan.
+   v2 gives each rank its own FORM, so order survives small cells and dimming:
+     1. next  — a filled tile the size of its cell: the same class of object as
+                the live yellow tile, so it reads as "the cell you act on after
+                this one", not as one dot among several;
+     2. after — an open ring (hollow, so it never competes with a filled mark);
+     3. then  — a small solid disc;
+     4. later — a smaller, fainter disc.
+   Form does the work that opacity alone could not: at an 8 mm cell a shrinking
+   ring ramp compresses to a few pixels per step, whereas filled-tile → ring →
+   disc stays legible at a glance. Size and opacity still ramp monotonically on
+   top of it (sooner = bigger and brighter), and a dashed path joins
+   live → next → … in sequence, so the order is drawn rather than inferred.
+   Color still only ever says now / next — never which symbol (no bits leak;
+   the previews are the same i.i.d. targets, merely shown early). All geometry
+   scales off --cell, set per-target in JS, so it works at 8 mm and at 25 mm. */
+
 #previews { position: absolute; inset: 0; pointer-events: none; }
-.preview-dot { position: absolute; width: 0; height: 0; pointer-events: none; }
+
+/* The order path sits under the dots (first child = painted first). */
+#preview-path {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+#preview-path line {
+  stroke: var(--live);
+  stroke-width: 2;
+  stroke-dasharray: 5 5;
+  stroke-linecap: round;
+}
+
+.preview-dot { position: absolute; width: 0; height: 0; pointer-events: none; --scale: .6; }
+
+/* Rank 1 — the next target: a filled tile matching the cell, mirroring the
+   live target's geometry (inset 3 px, 4 px radius) in green instead of yellow
+   and without the glow, so it never competes for "act now". */
+.preview-dot .ptile {
+  position: absolute;
+  display: none;
+  left: calc(var(--cell, 24px) / -2 + 3px);
+  top: calc(var(--cell, 24px) / -2 + 3px);
+  width: calc(var(--cell, 24px) - 6px);
+  height: calc(var(--cell, 24px) - 6px);
+  border: 2px solid var(--live);
+  border-radius: 4px;
+  background: rgba(88, 179, 104, .28);
+}
+.preview-dot.r1 .ptile { display: block; }
+
+/* Rank 2 — an open ring: hollow, so it never reads as "filled like the next
+   one", and diameter --scale × cell so it is also plainly smaller. */
+.preview-dot .pring {
+  display: none;
+  position: absolute;
+  left: calc(var(--cell, 24px) * var(--scale) / -2);
+  top: calc(var(--cell, 24px) * var(--scale) / -2);
+  width: calc(var(--cell, 24px) * var(--scale));
+  height: calc(var(--cell, 24px) * var(--scale));
+  border: 2px solid var(--live);
+  border-radius: 50%;
+}
+.preview-dot.r2 .pring { display: block; }
+
+/* The center mark: a small anchor dot under ranks 1–2, and the whole mark for
+   ranks 3+ (JS sizes it via --pdot, monotonically decreasing with rank, so
+   "sooner = bigger" still holds across the form change). */
 .preview-dot .pdot {
   position: absolute;
-  left: -2.5px;
-  top: -2.5px;
-  width: 5px;
-  height: 5px;
+  left: calc(var(--pdot, 5px) / -2);
+  top: calc(var(--pdot, 5px) / -2);
+  width: var(--pdot, 5px);
+  height: var(--pdot, 5px);
   border-radius: 50%;
   background: var(--live);
 }
-.preview-dot .pring {
-  position: absolute;
-  left: -8px;
-  top: -8px;
-  width: 16px;
-  height: 16px;
-  border: 1.5px solid var(--live);
-  border-radius: 50%;
-}
-.preview-dot .pring2 {
-  position: absolute;
-  left: -13px;
-  top: -13px;
-  width: 26px;
-  height: 26px;
-  border: 1.5px solid var(--live);
-  border-radius: 50%;
-  opacity: .5;
-}
+/* The filled tile already marks rank 1; a dot on top of it is just noise. */
+.preview-dot.r1 .pdot { display: none; }
 
 /* ---- tap feedback (touch mode): a ring that pops at the tap point ---- */
 
@@ -293,9 +341,11 @@ body.armed #field { cursor: none; }
 }
 #sheet.open { transform: translateY(0); }
 
-.sh-row { display: flex; align-items: center; gap: 14px; }
+/* Rows and segments wrap: the touch cell-size segment is six options wide,
+   which overflows a phone-width sheet on one line. */
+.sh-row { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; }
 .sh-label { color: var(--dim); font-size: 12px; letter-spacing: .05em; }
-.seg { display: flex; gap: 6px; }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
 .seg button {
   font-family: var(--mono);
   font-size: 13px;
@@ -305,6 +355,8 @@ body.armed #field { cursor: none; }
   border-radius: 5px;
   padding: 4px 11px;
   cursor: pointer;
+  /* Finger-sized hit area for the tablet path; visual size is unchanged. */
+  min-height: 32px;
 }
 .seg button:hover { color: var(--fg); }
 .seg button.on { color: var(--bg); background: var(--caret); border-color: var(--caret); }

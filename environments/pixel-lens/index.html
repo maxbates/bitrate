@@ -30,7 +30,11 @@
 
   <main id="field">
     <div id="gridarea"></div>
-    <div id="previews"></div>
+    <!-- Look-ahead layer. The SVG is first so the order path paints under the
+         preview marks; the marks themselves are pooled and placed by JS. -->
+    <div id="previews">
+      <svg id="preview-path" aria-hidden="true"></svg>
+    </div>
     <div id="target" hidden>
       <div class="fill"></div>
       <div class="ring r1"></div>
@@ -73,6 +77,8 @@
       <div class="seg" id="seg-input">
         <button data-v="mouse">mouse + loupe</button>
         <button data-v="touch">touch (tablet)</button>
+        <!-- Hybrid: press to aim under the loupe, lift to select. -->
+        <button data-v="hybrid">touch + loupe · lift</button>
       </div>
     </div>
     <div class="sh-row">
