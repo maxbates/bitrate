@@ -344,10 +344,19 @@ function renderBoard() {
     return;
   }
   let html = '<table class="lb"><tr>' +
-    '<th></th><th>player</th><th>bits/s</th><th>mode</th><th>config</th><th>acc</th><th>when</th></tr>';
+    '<th></th><th>player</th><th>bits/s</th><th>mode</th><th>config</th><th>acc</th>' +
+    '<th>round</th><th>when</th></tr>';
   for (const r of rows) {
     const you = r.device_id === DEVICE_ID ? '<span class="you">you</span>' : '';
     const acc = r.sc + r.si > 0 ? ((100 * r.sc) / (r.sc + r.si)).toFixed(1) + '%' : '—';
+    // Which round this score came from: this player's nth run of this game.
+    // A top score on someone's 3rd round and one on their 40th are different
+    // claims, and the row that makes the claim should say which it is.
+    const round = r.round || 0;
+    const roundCell = '<td class="round" title="' + (round
+      ? 'this player\'s run #' + round + ' of this game (practice and scored)' +
+        (r.scored_round ? ' · their scored run #' + r.scored_round : '')
+      : 'unknown') + '">' + (round ? '#' + round : '—') + '</td>';
     html += '<tr class="row" data-run="' + r.run_id + '" data-variant="' + r.variant_id + '" data-env="' + envOf(r) + '">' +
       '<td class="rank">' + r.rank + '</td>' +
       '<td><span class="player">' + r.pseudonym + '</span>' + you + '</td>' +
@@ -355,9 +364,10 @@ function renderBoard() {
       '<td>' + ((ENV_META[envOf(r)] || {}).name || envOf(r)) + '</td>' +
       '<td>' + configSummary(r.variant_id) + '</td>' +
       '<td>' + acc + '</td>' +
+      roundCell +
       '<td>' + agoFmt(r.ended_at) + '</td></tr>';
     if (openDetail === r.run_id) {
-      html += '<tr class="detail-row"><td colspan="7"><div class="lb-detail" id="detail-' + r.run_id + '">' +
+      html += '<tr class="detail-row"><td colspan="8"><div class="lb-detail" id="detail-' + r.run_id + '">' +
         '<div class="d-loading">loading run…</div></div></td></tr>';
     }
   }

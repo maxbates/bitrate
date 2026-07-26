@@ -89,6 +89,15 @@ func TestLeaderboard(t *testing.T) {
 		if row.Pseudonym == "" || row.Environment != "stream-typing" {
 			t.Fatalf("row missing display fields: %+v", row)
 		}
+		// The round this score came from: A's best is their 2nd run of the
+		// game, B's is their 1st.
+		want := 1
+		if row.DeviceID == "aaaa111122223333" {
+			want = 2
+		}
+		if row.Round != want || row.ScoredRound != want {
+			t.Fatalf("device %s: round = %d (scored %d), want %d", row.DeviceID, row.Round, row.ScoredRound, want)
+		}
 	}
 	// History includes everything (verified flag distinguishes), 4 runs.
 	if len(lb.History) != 4 {
@@ -105,6 +114,56 @@ func TestLeaderboard(t *testing.T) {
 	}
 	if len(lb.Variants) != 1 {
 		t.Fatalf("variants = %d, want 1", len(lb.Variants))
+	}
+}
+
+// Playing the game is playing the game: a practice bout consumes a round, and
+// only scored runs advance the scored round. A run that was invalidated never
+// finished, so it consumes neither.
+func TestLeaderboardRounds(t *testing.T) {
+	_, ts := newTestServer(t)
+	const device = "aaaa111122223333"
+	ua := json.RawMessage(`{"ua":"Mozilla/5.0 (X11; Linux x86_64) Firefox/128.0"}`)
+
+	// Round 1: a practice bout.
+	practice := postJSON[startResp](t, ts.URL+"/api/run/start", startReq{
+		DeviceID: device, Config: defaultConfig(), Scored: false, ClientMeta: ua,
+	})
+	postJSON[submitResp](t, ts.URL+"/api/run/submit", submitReq{
+		RunID: practice.RunID, DeviceID: device, ElapsedMs: 20000,
+		Keystrokes: syntheticKeystrokes(practice.Sequence, 40, 400),
+	})
+
+	// A run the player lost (focus, resize): submitted invalidated, no round.
+	dropped := postJSON[startResp](t, ts.URL+"/api/run/start", startReq{
+		DeviceID: device, Config: defaultConfig(), Scored: true, ClientMeta: ua,
+	})
+	postJSON[submitResp](t, ts.URL+"/api/run/submit", submitReq{
+		RunID: dropped.RunID, DeviceID: device, Invalidated: true,
+		Keystrokes: syntheticKeystrokes(dropped.Sequence, 30, 400),
+	})
+
+	// Round 2, and their first scored one — the row the board will rank.
+	playRun(t, ts.URL, device, 100, 400)
+
+	lb := getJSON[lbResp](t, ts.URL+"/api/leaderboard")
+	if len(lb.Rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(lb.Rows))
+	}
+	if lb.Rows[0].Round != 2 {
+		t.Fatalf("round = %d, want 2 (practice counted, invalidated did not)", lb.Rows[0].Round)
+	}
+	if lb.Rows[0].ScoredRound != 1 {
+		t.Fatalf("scored_round = %d, want 1", lb.Rows[0].ScoredRound)
+	}
+	// The practice bout is round 1 in history, and has no scored round.
+	for _, h := range lb.History {
+		if h.IsScored {
+			continue
+		}
+		if h.Round != 1 || h.ScoredRound != 0 {
+			t.Fatalf("practice bout: round = %d, scored_round = %d, want 1 and 0", h.Round, h.ScoredRound)
+		}
 	}
 }
 

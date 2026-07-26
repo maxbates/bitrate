@@ -287,6 +287,26 @@ function laneAtX(px) {
   return Math.max(0, Math.min(Z - 1, Math.floor(t * Z)));
 }
 
+// ---- what is riding the arc? ----
+// The authority is pointerType on the event itself, not a device sniff: a
+// touch laptop has a touchscreen and can still be played entirely with the
+// trackpad. A pen counts as touch — a stylus rides the arc the same way.
+//
+// Unlike drum pad, a cursor here doesn't invalidate anything: parabola fall is
+// a touch game by design, not by rule, and a mouse run is a real run of a
+// different task (a cursor jumps; a thumb travels). So it says so once,
+// records it on the run, and gets out of the way.
+let cursorNoted = false;
+
+function noteCursorInput(e) {
+  if (e.pointerType === 'touch' || e.pointerType === 'pen') return;
+  if (run) run.mouseSeen = true;
+  if (cursorNoted) return;
+  cursorNoted = true;
+  showNotice('parabola fall is built for a thumb riding the arc — a mouse plays, ' +
+    'but the tempo assumes a thumb that never lifts, so these numbers aren\'t a phone\'s.', '', 7000);
+}
+
 // ---- input: the thumb rides the arc (never lifts) ----
 
 fieldEl.addEventListener('pointerdown', (e) => {
@@ -295,6 +315,7 @@ fieldEl.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   if (sheetOpen) { closeSheet(); return; }
   if (state !== 'practice' && state !== 'armed' && state !== 'scored') return;
+  noteCursorInput(e);
   fieldEl.setPointerCapture(e.pointerId);
   const r = fieldEl.getBoundingClientRect();
   thumb.down = true;
@@ -538,6 +559,9 @@ async function submitRun(invalidated) {
   const elapsed = r.scored ? DURATION_MS : Math.max(elapsedMsOf(r), 0);
   const tSec = r.scored ? CONFIG.duration_s : Math.max(elapsed, lastKeyT(r)) / 1000;
   const cs = scoreWith(r, tSec);
+  // A cursor run still counts — it just isn't the thumb this game is scored
+  // for, so the ledger says which hand made it (see noteCursorInput).
+  if (r.mouseSeen) r.flags.mouse_input = true;
   const payload = {
     run_id: r.id, device_id: DEVICE_ID, invalidated, flags: r.flags,
     elapsed_ms: elapsed, client_result: invalidated ? null : cs, keystrokes: r.keylog,

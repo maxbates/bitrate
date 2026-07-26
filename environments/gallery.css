@@ -129,6 +129,7 @@ table.lb { width: 100%; border-collapse: collapse; }
 .lb tr.row:hover td { background: #14171c; }
 .lb td.bps { color: var(--fg); font-size: 16px; font-variant-numeric: tabular-nums; }
 .lb td.rank { color: var(--dim); font-variant-numeric: tabular-nums; }
+.lb td.round { font-variant-numeric: tabular-nums; cursor: help; }
 .lb .you {
   color: var(--live);
   border: 1px solid var(--live);

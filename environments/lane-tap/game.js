@@ -241,6 +241,27 @@ function laneAtX(px) {
   return Math.max(0, Math.min(Z - 1, Math.floor(t * Z)));
 }
 
+// ---- what made this selection? ----
+// The authority is pointerType on the event itself, not a device sniff: a
+// touch laptop has a touchscreen and can still be played entirely with the
+// trackpad. A pen counts as touch — a stylus is direct pointing at the lane,
+// not cursor indirection.
+//
+// Unlike drum pad, a cursor here doesn't invalidate anything: lane tap is a
+// touch game by design, not by rule, and a mouse run is a real run of a
+// different task. So it says so once, records it on the run, and gets out of
+// the way — the note is for whoever reads the leaderboard later.
+let cursorNoted = false;
+
+function noteCursorInput(e) {
+  if (e.pointerType === 'touch' || e.pointerType === 'pen') return;
+  if (run) run.mouseSeen = true;
+  if (cursorNoted) return;
+  cursorNoted = true;
+  showNotice('lane tap is built for thumbs on a touchscreen — a mouse plays, ' +
+    'but one cursor can\'t alternate fingers, so these numbers aren\'t a tablet\'s.', '', 7000);
+}
+
 // ---- selection: pointerdown is the earliest event; every finger counts ----
 
 fieldEl.addEventListener('pointerdown', (e) => {
@@ -248,6 +269,7 @@ fieldEl.addEventListener('pointerdown', (e) => {
   if (e.pointerType === 'mouse' && e.button !== 0) return; // left button only
   if (sheetOpen) { closeSheet(); return; }
   if (state !== 'practice' && state !== 'armed' && state !== 'scored') return;
+  noteCursorInput(e);
   const r = fieldEl.getBoundingClientRect();
   const x = e.clientX - r.left;
   const y = e.clientY - r.top;
@@ -437,6 +459,9 @@ async function submitRun(invalidated) {
   const elapsed = r.scored ? DURATION_MS : Math.max(elapsedMsOf(r), 0);
   const tSec = r.scored ? CONFIG.duration_s : Math.max(elapsed, lastKeyT(r)) / 1000;
   const cs = scoreWith(r, tSec);
+  // A cursor run still counts — it just isn't the thumbs this game is scored
+  // for, so the ledger says which hands made it (see noteCursorInput).
+  if (r.mouseSeen) r.flags.mouse_input = true;
   const payload = {
     run_id: r.id, device_id: DEVICE_ID, invalidated, flags: r.flags,
     elapsed_ms: elapsed, client_result: invalidated ? null : cs, keystrokes: r.keylog,

@@ -159,6 +159,12 @@ type historyEntry struct {
 	FirstContact bool    `json:"is_first_contact"`
 	Anomaly      bool    `json:"anomaly"`
 	Verified     bool    `json:"verified"`
+	// Which round of this game this run was for this player: Round counts
+	// every completed run of the environment, ScoredRound only the scored ones
+	// (0 for a practice bout). Assigned in buildHistory, which is where the
+	// runs are already in the order that defines them.
+	Round       int `json:"round"`
+	ScoredRound int `json:"scored_round"`
 }
 
 type lbRow struct {
@@ -226,6 +232,26 @@ func (s *server) buildHistory() []historyEntry {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].EndedAt < out[j].EndedAt })
+
+	// Which round this was for that player: their nth completed run of this
+	// game, counting practice, plus the nth of their scored ones. Derived from
+	// the ordering above rather than stamped on the run at start time — a
+	// number that lives in the query can't drift from the runs it counts, it's
+	// already true of every run in the ledger, and merging two ledgers
+	// renumbers correctly for free (spec §4.4: the board is a query, not a
+	// table). Invalidated and unfinished runs never reach here, so they don't
+	// consume a round.
+	type key struct{ device, env string }
+	round, scoredRound := map[key]int{}, map[key]int{}
+	for i := range out {
+		k := key{out[i].DeviceID, out[i].Environment}
+		round[k]++
+		out[i].Round = round[k]
+		if out[i].IsScored {
+			scoredRound[k]++
+			out[i].ScoredRound = scoredRound[k]
+		}
+	}
 	return out
 }
 
