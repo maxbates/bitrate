@@ -188,23 +188,11 @@ body.armed #field { cursor: none; }
 }
 
 /* Tapping a green look-ahead dot instead of the live cell: a far louder red
-   than a plain miss — a thick burst at the tap point plus a red pulse around
-   the whole field. The error is "next mistaken for now", which is worth
-   calling out distinctly; ordinary misses stay quiet. */
-.tap-flash.early::after {
-  left: -18px;
-  top: -18px;
-  width: 36px;
-  height: 36px;
-  border: 4px solid var(--err);
-  box-shadow: 0 0 22px 6px rgba(224, 82, 82, .55), inset 0 0 16px rgba(224, 82, 82, .45);
-  animation: tap-pop-big .5s ease-out forwards;
-}
-@keyframes tap-pop-big {
-  0%   { opacity: 1;  transform: scale(.3); }
-  55%  { opacity: .9; transform: scale(1.9); }
-  100% { opacity: 0;  transform: scale(3.4); }
-}
+   than a plain miss — a red pulse around the whole field. The error is "next
+   mistaken for now", which is worth calling out distinctly; ordinary misses
+   stay quiet. The tap-point burst that used to accompany this was dropped
+   (2026-07-26) — the border says it, and a red ring landing on the green dot
+   you just hit read as a second, separate error. */
 #field.err-pulse::after {
   content: '';
   position: absolute;

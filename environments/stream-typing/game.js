@@ -869,20 +869,46 @@ function showError(err) {
 
 let audioCtx = null;
 
+// Warmed on the first interaction, not on the first miss: iOS hands out every
+// context suspended and only a user gesture may start it, so a buzz that has to
+// build its own context arrives late or not at all on a phone/tablet.
+function ensureAudio() {
+  // CONFIG lands with the first fetch; a tap before that just skips the warm-up.
+  if (!CONFIG || !CONFIG.audio_feedback) return;
+  try {
+    audioCtx = audioCtx || new AudioContext();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch { /* audio is never load-bearing */ }
+}
+// Self-removing rather than {once}: an interaction before CONFIG lands (or with
+// the buzz switched off) must not burn the one chance to warm up.
+function warmAudioOnce() {
+  ensureAudio();
+  if (!audioCtx) return;
+  document.removeEventListener('pointerdown', warmAudioOnce, true);
+  document.removeEventListener('keydown', warmAudioOnce, true);
+}
+document.addEventListener('pointerdown', warmAudioOnce, true);
+document.addEventListener('keydown', warmAudioOnce, true);
+
 function errorBuzz() {
   if (!CONFIG.audio_feedback) return;
+  ensureAudio();
+  if (!audioCtx) return;
   try {
-    audioCtx = audioCtx || new AudioContext(); // created post-gesture: keydown
     const t0 = audioCtx.currentTime;
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     o.type = 'square';
-    o.frequency.value = 110;
-    g.gain.setValueAtTime(0.05, t0);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    // 220, not the 110 this started at: a phone/tablet speaker is physically
+    // too small to radiate a 110 Hz fundamental, so the buzz was inaudible on
+    // an iPad. Kept in lockstep with pixel-lens/drum-pad (2026-07-26).
+    o.frequency.value = 220;
+    g.gain.setValueAtTime(0.12, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.1);
     o.connect(g).connect(audioCtx.destination);
     o.start(t0);
-    o.stop(t0 + 0.09);
+    o.stop(t0 + 0.1);
   } catch { /* audio is never load-bearing */ }
 }
 
