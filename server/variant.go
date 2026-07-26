@@ -27,6 +27,35 @@ type Config struct {
 	Hash         string // hex SHA-256 of Canonical
 }
 
+// effectiveEnv reports which game a variant actually is, which is not always
+// the environment key it was stored under. drum pad's page *is* pixel lens's
+// implementation with window.BITRATE_INPUT='touch' (see INPUT_MODES in
+// environments/pixel-lens/game.js), and the two were a single environment until
+// the split on 2026-07-25 — so every pixel-lens variant carrying input:"touch"
+// is a drum-pad variant recorded before the name existed. The rule is exact,
+// not a heuristic: the input mode is what selects the game.
+//
+// Derived in the query rather than migrated into the ledger, deliberately
+// (spec §4.4: the board is a query, not a table). Variant identity is the
+// SHA-256 of the config *including* the environment key, so rewriting the
+// stored environment would re-mint every affected hash and orphan the runs
+// pointing at the old ones. Deriving costs one field read and is reversible.
+func effectiveEnv(v *Variant) string {
+	if v == nil {
+		return ""
+	}
+	if v.Environment != "pixel-lens" {
+		return v.Environment
+	}
+	var c struct {
+		Input string `json:"input"`
+	}
+	if json.Unmarshal(v.Config, &c) == nil && c.Input == "touch" {
+		return "drum-pad"
+	}
+	return v.Environment
+}
+
 // M returns the number of sampled symbols (excluding the correction key).
 func (c *Config) M() int {
 	if c.AlphabetSize > 0 {

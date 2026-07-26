@@ -137,6 +137,7 @@
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
+a.act { text-decoration: none; } /* the design-notes link is a control, not prose */
 .act.click:hover { color: var(--fg); border-color: var(--dim); }
 .act.click:active { background: rgba(255, 255, 255, .07); }
 .act.click:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }

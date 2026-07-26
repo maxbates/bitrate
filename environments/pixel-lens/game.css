@@ -305,6 +305,7 @@ body.picking #device-warn { display: none; }
 }
 .sp-tips li + li { margin-top: .3rem; }
 .sp-tips b { color: var(--fg); font-weight: normal; }
+.sp-tips em { color: var(--accent); font-style: normal; }
 
 .sp-opts {
   display: flex;
@@ -315,6 +316,7 @@ body.picking #device-warn { display: none; }
   margin-top: 1.6rem;
 }
 .sp-opt {
+  position: relative;   /* anchors the recommendation badge */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -331,6 +333,23 @@ body.picking #device-warn { display: none; }
 }
 .sp-opt:hover, .sp-opt:focus-visible { border-color: var(--caret); color: var(--fg); outline: none; }
 .sp-opt:active { background: rgba(255, 255, 255, .06); }
+/* The size the leaderboard likes on this device class. A recommendation, not a
+   lock — the copy under the row says to go try the others, and every size stays
+   one tap away in settings. Badge is absolutely positioned so recommending one
+   option doesn't make it taller than its neighbours. */
+.sp-rec { border-color: var(--accent); color: var(--fg); }
+.sp-badge {
+  position: absolute;
+  top: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: var(--bg);
+  color: var(--accent);
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  padding: 0 6px;
+}
 /* The 3x3 at its true size: --c is the cell in px, set per option in JS. */
 .sp-grid {
   display: grid;

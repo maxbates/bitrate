@@ -38,11 +38,38 @@ const DEFAULT_CELL_MM = 5;
 const INPUT_MODES = { mouse: 'pixel-lens', touch: 'drum-pad' };
 const CELL_OPTS = { mouse: [3, 5, 7.5, 10], touch: [12, 16, 20, 25] };
 // Per-mode starting points, not limits — both knobs are in the settings sheet.
-// Touch starts at 16 mm (a fingertip pad is ~15 mm, so it's the smallest cell
-// that still hits first try) with one look-ahead dot, because a tap has no
-// hover to plan under: seeing the next target is what keeps the thumb moving.
-const DEFAULT_CELL = { mouse: 5, touch: 16 };
+// One look-ahead dot on touch, because a tap has no hover to plan under:
+// seeing the next target is what keeps the thumb moving.
 const DEFAULT_PREVIEW = { mouse: 0, touch: 1 };
+
+// Recommended tile size, taken from the leaderboard rather than from ergonomic
+// first principles. The counterintuitive part is that the tablet wants *bigger*
+// tiles than the phone — scored 60 s runs, best per size:
+//
+//   tablet   20 mm -> 16.26, 15.09 bps    12 mm -> 14.98, 14.46
+//   phone    12 mm -> 15.41, 14.16        20 mm -> 11.36
+//
+// Fitts explains it. On a tablet you play with two index fingers and a freely
+// moving arm, so travel time dominates and fewer, larger tiles win. On a phone
+// one thumb barely travels, so travel is nearly free and the extra bits per tap
+// from a denser grid are profit. 16 mm — the previous default, picked from
+// fingertip width — is the worst tested size on a tablet and was never tested
+// on a phone at all.
+const RECOMMENDED_CELL = { mouse: 5, touch: { phone: 12, tablet: 20 } };
+
+// Phone or tablet off the short edge of the screen rather than the user agent:
+// what sets the best tile size is how far the hand has to reach, which a UA
+// string doesn't report (and iPads lie about it anyway). The two device classes
+// in the data sit at 414 and 1032 CSS px short-edge, so this threshold is
+// nowhere near a real boundary.
+function deviceClass() {
+  return Math.min(screen.width, screen.height) < 600 ? 'phone' : 'tablet';
+}
+
+function recommendedCell(mode) {
+  const r = RECOMMENDED_CELL[mode];
+  return typeof r === 'number' ? r : r[deviceClass()];
+}
 const CELL_MIN = 2, CELL_MAX = 30;
 const MAX_PREVIEW = 4;
 
@@ -106,7 +133,7 @@ function loadSettings() {
   previewDepth = typeof s.preview === 'number' && s.preview >= 0 && s.preview <= MAX_PREVIEW
     ? Math.round(s.preview) : DEFAULT_PREVIEW[inputMode];
   // Snap the cell size to a valid option for the mode (options differ by mode).
-  if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
+  if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = recommendedCell(inputMode);
 }
 
 function saveSettings() {
@@ -1250,7 +1277,7 @@ async function applyCfgParam() {
     if (c.input === 'mouse' || c.input === 'touch') inputMode = c.input;
     if (typeof c.preview === 'number' && c.preview >= 0 && c.preview <= MAX_PREVIEW) previewDepth = Math.round(c.preview);
     if (typeof c.cell_mm === 'number' && c.cell_mm >= CELL_MIN && c.cell_mm <= CELL_MAX) cellMm = c.cell_mm;
-    if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
+    if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = recommendedCell(inputMode);
     renderCellSeg();
     buildConfig();
   } catch { /* ship build or unknown hash: defaults */ }
@@ -1314,9 +1341,12 @@ function sizeOptionsHTML() {
   // Nine samples; the CSS shows a 2x2 of them on a phone, where a 3x3 of
   // real-size tiles is most of the screen.
   const cells = new Array(9).fill('<i></i>').join('');
+  const rec = recommendedCell(inputMode);
   return CELL_OPTS[inputMode].map((mm) => {
     const m = gridMetrics(mm);
-    return '<button type="button" class="sp-opt" data-v="' + mm + '">' +
+    const isRec = mm === rec;
+    return '<button type="button" class="sp-opt' + (isRec ? ' sp-rec' : '') + '" data-v="' + mm + '">' +
+      (isRec ? '<span class="sp-badge">recommended</span>' : '') +
       '<span class="sp-grid" style="--c:' + m.cell + 'px">' + cells + '</span>' +
       '<span class="sp-size">' + mm + ' mm</span>' +
       '<span class="sp-rate">' + m.cols + '×' + m.rows + ' · <b>' + m.bits.toFixed(2) +
@@ -1338,8 +1368,8 @@ function touchTipsHTML() {
   if (inputMode !== 'touch') return '';
   return '<ul class="sp-tips">' +
     '<li><b>fingers</b> — tablet: two index fingers. phone: one, so your hand never covers the board.</li>' +
-    '<li><b>device</b> — a tablet fits more tiles, so taps are worth more: take it if your arm moves freely, stay on the phone if reach is the limit.</li>' +
-    '<li><b>try it</b> — practice is free. a few seconds at two or three sizes, then trust your hand.</li>' +
+    '<li><b>size</b> — the badged tile is what has scored best on a screen this size. tablets do better with <em>bigger</em> tiles than phones: two fingers crossing a big screen spend their time travelling, so fewer stops beats more bits.</li>' +
+    '<li><b>try it</b> — practice is free, and the badge is an average, not your hand. a few seconds at two or three sizes, then trust your hand.</li>' +
     '</ul>';
 }
 

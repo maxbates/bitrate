@@ -1,74 +1,153 @@
-# bit-rate
+# drum pad
 
-A game that maximizes the bit rate a human can push through a computer
+A game for maximizing the bit rate a human can push through a computer
 interface, scored as
 
 ```
 B = log2(N − 1) · max(Sc − Si, 0) / t     bits per second
 ```
 
+One tile on a grid lights up. You tap it. That's the whole game.
+
 ## Run it
+
+**On the web — the intended path.** Open <https://bitrate.einkgen.link> on a
+**tablet or phone**. Nothing to install.
+
+**Locally, offline.** From the bundle:
 
 ```
 bash run.sh
 ```
 
-That's it — no installation, no network, no runtime dependencies. The script
-starts a small local server (loopback only), prints a URL, and opens your
-browser; if the browser doesn't open, paste the printed URL into one. Works
-fully offline. Linux (x86_64 / arm64) is the supported platform; macOS
-binaries are included as a courtesy.
+No installation, no network, no runtime dependencies — the script starts a
+loopback-only server, prints a URL, and opens your browser. Linux (x86_64 /
+arm64) is the supported platform; macOS binaries ride along as a courtesy.
+
+Either way you want a **touchscreen**. Drum pad is a direct-touch game; played
+with a mouse it becomes a different and worse game, which is why the
+mouse-driven variant is a separate thing entirely.
 
 ## How to play
 
-- You start in **practice** — type the letter at the caret. The stream is
-  self-paced: it advances only when you type.
-- The one strategy worth knowing: **miss → backspace → retype.** An
-  uncorrected error costs you −2 net; correcting it turns that into +1.
-- Press **Enter** to arm the scored run. Your **first keypress starts the
-  60-second clock** — take your time, the buffer is already visible.
-- After 60.000 s, input freezes and the results card shows your bit rate
-  with N, Sc, Si, and a breakdown of where the bits went.
-- Ending a scored run early takes Esc twice. Losing window focus mid-run
-  invalidates the run (it never scores); Enter re-arms with a fresh sequence.
+- **Pick a tile size** on first open. The badged size is what has scored best
+  on a screen the size of yours. Take the recommendation or ignore it — see
+  *why this size*, below.
+- **Practice is free and unlimited.** The tile lights up, you tap it, the next
+  one lights up. A dimmer **look-ahead dot** shows where the next target will
+  be, so your other finger can already be moving.
+- **Arm the scored run** with the `arm scored run` button (or `Enter`). Your
+  **first tap starts the 60-second clock** — the board is already on screen, so
+  take as long as you like before that first tap.
+- After 60.000 s input freezes and the results card shows your bit rate with
+  N, Sc, Si, and a breakdown of where the bits went.
+- **Two fingers on a tablet**, one on a phone — on a phone, one finger keeps
+  your hand from covering the board.
 
 ## The accounting, stated up front
 
-- **Targets are i.i.d. uniform** over 26 lowercase letters, sampled
-  server-side with a seeded generator. Repeats appear (they must — marked
-  with a subtle underline). No language model, no predictive text anywhere.
-- **N = 27**: 26 letters plus the reserved backspace key, which the scoring
-  formula's own definition counts among the possible selections (its
-  reference example prices N=30 as log2(29)). Bits per selection:
-  log2(26) ≈ 4.70.
-- **Backspace is a scored selection**: correct iff it deletes an uncorrected
-  error immediately behind the cursor, incorrect otherwise. Every keypress
-  has a deterministic verdict; ground truth is never ambiguous.
-- **The timer starts at your first scored keypress**, not page load — the
-  session is the 60.000 s from that press, measured on the keystroke event's
-  own timestamp. Keys pressed before the boundary count even if processed
-  after it.
-- **The visible lookahead does not break i.i.d.** — the future draws are
-  already fixed; seeing them adds no exploitable structure. It exists
-  because reading ahead is how humans overlap perception with motor output.
-- The live bit-rate HUD updates once per second from page load; the final
-  score is recomputed server-side from the keystroke log. Everything stays
-  on your machine.
+- **Targets are i.i.d. uniform** over the tiles, drawn server-side from a
+  seeded generator, sampled **with replacement** — the same tile can light up
+  twice in a row. No patterns, no structure, no language model, no predictive
+  anything.
+- **N is the number of tiles**, recomputed from your viewport. Tiles are the
+  distinguishable selections: any touch inside a tile selects that tile, so
+  counting tiles — rather than pixels or touch coordinates — is the honest
+  alphabet size. Resizing the window mid-run changes the alphabet and therefore
+  invalidates the run.
+- **Every tap is a selection and is judged at the moment it lands.** Right tile
+  or wrong, the tap consumes the current target and the next one appears.
+  There is no stall state and no ambiguity about what the correct action was.
+- **There is no correction key.** A tap is committed the instant it lands;
+  there is nothing behind the cursor to delete. The scoring formula charges
+  `log2(N − 1)` for a reserved correction key whether or not one exists, so we
+  pay for it here — at N = 84 that is 0.017 bits per tap, which is the cheapest
+  honest option available. (A correction tile would cost a whole tile out of
+  the grid and a decision out of every error.)
+- **The live bit-rate readout** updates once per second over all elapsed
+  session time. The final score is recomputed server-side from the tap log, and
+  any disagreement with the client's number is recorded as an anomaly.
+- **The visible look-ahead dot does not break i.i.d.** The upcoming draws are
+  already fixed; showing one adds no exploitable structure. It exists because
+  human perceptual bandwidth vastly exceeds motor output, and the only useful
+  thing to spend the surplus on is planning the next movement.
 
-## Why this design
+## Why touch, and not the keyboard
 
-Rough throughput for unpredictable targets on commodity hardware: touch
-typing ~20–40 bits/s at the practiced ceiling; mouse pointing ~4–10
-(Fitts-bound, serial); gaze or voice lower still once recognition latency
-is paid. The keyboard wins structurally — ten parallel, discrete,
-overlearned effectors with no acquisition cost per target. The alphabet
-stops at 26 letters because that is where an ordinary typist's overlearned
-motor repertoire ends: log2 gains from a larger symbol set are erased by
-Hick's-law decision time and error double-penalties the moment you leave
-well-trained keys.
+We expected the keyboard to win. It didn't, and the reason is the most
+interesting thing we found.
 
-For calibration: the best invasive brain–computer interface in the
-literature this scoring formula comes from reports ~8.6 bits/s. A first-time
-player on this game typically lands 7–12; practiced typists clear 20. The
-interface, not the human, is usually the bottleneck — which is exactly what
-makes measuring the channel interesting.
+A keyboard offers ~4.7 bits per keystroke (26 letters + a backspace) and
+practiced typists reach 200 wpm, which looks like ~40 bits/s. But 200 wpm is a
+*prose* number. It exists because English is redundant and typists have
+overlearned motor programs for digrams and whole words. **An i.i.d. letter
+sequence has none of that**, and the brief explicitly forbids putting it back.
+Stripped of language structure, our best typing run managed 2.6 keystrokes/s —
+about 10 bits/s, roughly a sixth of the prose-implied rate.
+
+Direct touch has no such dependency. A tile grid gives **6.4 bits per tap** —
+more per selection than a letter — and the stimulus *is* the response: the
+thing that lights up is the thing you touch, with no learned mapping between
+them and nothing to translate. That is why it survives first contact, which is
+the only session that gets scored here.
+
+Measured, best scored 60-second run per game, human players only:
+
+| game | modality | best bits/s |
+|---|---|---|
+| **drum pad** | touch | **16.26** |
+| stream typing | keyboard, 26 letters | 10.34 |
+| beat hands | keyboard, paced | 7.81 |
+| pixel lens | mouse + fisheye loupe | 7.27 |
+| parabola fall | keyboard, paced | 5.20 |
+
+For calibration: the best invasive brain–computer interface in the literature
+this scoring formula comes from reports ~8.6 bits/s.
+
+## Why this N, and why this tile size
+
+N is not a free parameter — the tile size sets it, and the tile size is a
+property of your hand and your screen. Bigger tiles mean fewer of them: fewer
+bits per tap, but more taps per second and fewer misses, and **a miss is
+double-penalized** (it forfeits a +1 *and* subtracts 1). So the tile size is
+whatever maximizes the product, and that is an empirical question.
+
+At the recommended sizes: **N = 84** on a tablet (a 14×6 grid at 20 mm) for
+6.38 bits/tap, **N = 77** on a phone (7×11 at 12 mm) for 6.25 bits/tap.
+
+The measured optimum is not where ergonomics predicted, and the two device
+classes disagree — best scored run per tile size:
+
+| | 12 mm | 16 mm | 20 mm |
+|---|---|---|---|
+| **tablet** | 14.98 | 12.93 | **16.26** |
+| **phone** | **15.41** | — | 11.36 |
+
+The tablet wants *bigger* tiles than the phone. Fitts's law explains it: on a
+tablet you play with two index fingers and a freely moving arm, so travel time
+dominates and fewer, larger stops win. On a phone one thumb barely travels, so
+travel is nearly free and the extra bits per tap from a denser grid are pure
+profit. Pushing the tablet to 12 mm buys 8.1 bits/tap and *loses* overall —
+misses and travel eat more than the extra bits pay.
+
+Note what this rules out. A far larger grid is available and scores worse; the
+ceiling here is the finger, not the alphabet.
+
+## Things worth knowing
+
+- **The settings gear is real and you should use it.** Tile size, look-ahead
+  depth, and the error sound are all live during practice. Every change mints
+  a new content-addressed variant, so any configuration you land on is exactly
+  reproducible. The defaults are what won, not what we guessed.
+- **A miss buzzes and flashes red.** Deliberately loud — under double-penalized
+  scoring an unnoticed miss is worth two, and the fastest way to lose is to
+  keep sprinting past errors.
+- **Everything is local.** The offline bundle makes no network requests of any
+  kind; the run is scored by the loopback server the launcher started.
+
+## What's in the box
+
+A single static Go binary (standard library only, no cgo) that serves an
+embedded vanilla-JS frontend. No framework, no build step, no CDN, no package
+manager, nothing to install. `run.sh` dispatches on `uname` to the right
+prebuilt binary.

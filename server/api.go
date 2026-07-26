@@ -18,6 +18,13 @@ import (
 	"sync"
 )
 
+// shipGame is the environment the submission is: the variant the leaderboard
+// picked (spec §9 step 10). Drum pad won on every measure that matters —
+// including best-first-scored-run, the only one that resembles a grader's
+// single session. One constant so freezing the deliverable is a one-line
+// change, not a hunt through the routing table.
+const shipGame = "drum-pad"
+
 type server struct {
 	store *Store
 	env   fs.FS // environment frontends (embedded, or disk in -dev)
@@ -39,13 +46,11 @@ func newServer(store *Store, env fs.FS) *server {
 
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
-	// Lab: / is the environment chooser (grows into the step-6 gallery).
-	// Ship: / is the frozen game, straight away.
-	if buildProfile == "lab" {
-		mux.Handle("GET /{$}", http.RedirectHandler("/env/", http.StatusFound))
-	} else {
-		mux.Handle("GET /{$}", http.RedirectHandler("/env/stream-typing/", http.StatusFound))
-	}
+	// / is the game, in both profiles. The submission is a URL the graders
+	// open (spec §8), so the root has to land on the thing being scored rather
+	// than on a chooser; the gallery keeps its own address at /env/, which is
+	// where every environment's "← gallery" link already points.
+	mux.Handle("GET /{$}", http.RedirectHandler("/env/"+shipGame+"/", http.StatusFound))
 	static := http.StripPrefix("/env/", http.FileServerFS(s.env))
 	mux.HandleFunc("GET /env/", func(w http.ResponseWriter, r *http.Request) {
 		if s.dev {
@@ -53,6 +58,10 @@ func (s *server) routes() *http.ServeMux {
 		}
 		static.ServeHTTP(w, r)
 	})
+	// The README ships (the brief asks for it), so it is registered in both
+	// profiles rather than alongside the lab routes.
+	mux.HandleFunc("GET /readme", s.handleReadme)
+	mux.HandleFunc("GET /readme.md", handleReadmeRaw)
 	mux.HandleFunc("POST /api/run/start", s.handleRunStart)
 	mux.HandleFunc("POST /api/run/submit", s.handleRunSubmit)
 	s.registerLabRoutes(mux) // empty in ship builds (spec §8)

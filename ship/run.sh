@@ -13,4 +13,20 @@ case "$(uname -s)-$(uname -m)" in
 esac
 chmod +x "$BIN" 2>/dev/null || true  # ZIP extraction routinely drops exec bits
 command -v xattr >/dev/null 2>&1 && xattr -d com.apple.quarantine "$BIN" 2>/dev/null || true
+
+# Drum pad is a touch game, and the machine running this script may well not
+# have a touchscreen. Say so before the browser opens, along with the two things
+# a grader most needs: the hosted URL for playing it on a tablet, and where the
+# design notes live. Printed rather than buried in the README because this is
+# the one output every launch produces.
+cat <<'BANNER'
+bit-rate — drum pad
+
+  This is a TOUCH game. On a tablet or phone, play the hosted build instead:
+      https://bitrate.einkgen.link
+  Design notes (why this N, why touch, why this tile size):
+      /readme  on the URL below, or README.md next to this script
+
+BANNER
+
 exec "./$BIN"   # binds 127.0.0.1 on an OS-assigned port, prints the URL, opens the browser

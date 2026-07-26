@@ -195,9 +195,18 @@ mode contradicts the baseline by design, and that contradiction *is* the
 experiment. The rule-1/2/3/4 constraints bind everything without exception.
 
 **Contenders** (gallery front page, and the only games the leaderboard ranks):
-`drum-pad` (touch, finger cells), `pixel-lens` (mouse + fisheye loupe),
-`stream-typing` (the baseline and current ship candidate), `voice-babble`
-(hand-rolled DSP recognizer, per-player templates, solfège default).
+`drum-pad` (touch, finger cells — **the winner and what ships**, see spec §9
+step 10), `pixel-lens` (mouse + fisheye loupe), `stream-typing` (the baseline),
+`voice-babble` (hand-rolled DSP recognizer, per-player templates, solfège
+default).
+
+**drum-pad and pixel-lens are one implementation.** `drum-pad/index.html` loads
+`pixel-lens/game.js` with `window.BITRATE_INPUT='touch'`; the input mode selects
+the game. They were a single environment until 2026-07-25, so a `pixel-lens`
+variant with `input:"touch"` **is** a drum-pad variant — 41 human results. The
+board reclassifies them at query time via `effectiveEnv` (spec §4.4). **The
+stored `environment` field is provenance, not truth**; every analysis path must
+go through `effectiveEnv`.
 
 **Graveyard** (built, played, beaten or ruled out — still reachable, still in
 the history and progress strips, out of the leaderboard): `lane-tap`,
@@ -292,8 +301,31 @@ offline tests (3), cross-compiled ship build + gate in CI (4), settings sheet
 with content-addressed variants (5), runs/leaderboard/gallery (6), public deploy
 (8, partial), the merge CLI, and eight environments from the §5 backlog (9).
 
-Not built: the analysis notebook (7); the §6.1 pilot machinery — invite tokens,
-`/join`, `/pilot` guided sessions, `lab/pull.sh` (deliberately deferred in
-favour of the open sandbox); v2 per-player calibration; and step 10 — freezing
-the winning variant, stripping the lab gear (**the settings gear is lab
-machinery and currently ships visible**), and writing the final README.
+Step 10 is **partly done** (2026-07-26): `drum-pad` is frozen as the winner
+(`shipGame` in `server/api.go`, one constant driving the `/` redirect in both
+profiles); the README is written (`ship/README.md`) and rendered at `/readme` by
+both profiles from that one embedded source, linked from the results card and
+printed by `run.sh`; tile-size recommendations are badged in the first-open
+picker (`{phone: 12mm, tablet: 20mm}`, off the screen's short edge).
+
+Two reversals worth knowing, both owner decisions on 2026-07-26 and both
+recorded with rationale in the spec:
+
+- **The settings gear ships, visible** (spec §8). Tile size *is* N, and the right
+  N is a property of the player's hand and screen — shipping the gear with the
+  defaults that won beats shipping one guess. Does not re-admit the leaderboard,
+  gallery, telemetry, or device identity.
+- **The submission is a hosted URL *and* the offline ZIP** (spec §1 register
+  item 7). Rule 5's "or equivalent" covers a URL, and the brief names web apps
+  first; the site is the only way to hand a grader a touchscreen, and the ZIP is
+  the fallback if EC2/DNS/TLS/their proxy fails during grading. No gating on the
+  play path.
+
+Not built: the analysis notebook (7) — **and it must use `effectiveEnv`**; the
+§6.1 pilot machinery — invite tokens, `/join`, `/pilot` guided sessions,
+`lab/pull.sh` (deliberately deferred in favour of the open sandbox; pulls are
+currently a manual `curl` against token-gated `/api/export`); v2 per-player
+calibration; and the rest of step 10 — **the ship ZIP still embeds all eleven
+environments, including the rule-1-violating `word-typing`**, reachable at
+`/env/word-typing/` in the bundle *and* on the public site. That is the
+highest-priority remaining strip.

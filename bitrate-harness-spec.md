@@ -50,6 +50,8 @@ Several decisions rest on our reading of the brief, not its letter. Ranked by ri
 
 6. **Vocal symbols are symbols, not word-level targets — owner sign-off 2026-07-22.** Babble sounds (aah, ooh, mmm…), solfège syllables (do–ti), and letter names are arbitrary vocal symbols in the same sense the PDF blesses letter-labeled keys; rule 1's "no word-level targets" bans language words as targets (and the word environments that used them are gone/hidden accordingly). Includes borderline items like "aye".
 
+7. **A hosted URL is a valid submission — owner decision 2026-07-26.** Rule 5 asks for "a `run.sh` script (**or equivalent**) that launches the game with no exotic setup", and the brief's freedom clause names web apps first: "Web apps, native apps, terminal games—all fine." Opening a URL is the least exotic setup there is. We therefore submit **both**, and the redundancy is the point: the hosted site at <https://bitrate.einkgen.link> is the intended path (it is the only way to hand a grader a *touchscreen* build, which drum pad needs), and the offline ZIP with `run.sh` is the fallback that survives our EC2 instance, DNS, TLS, or the graders' corporate proxy failing inside the grading window. Neither depends on the other. No gating of any kind on the hosted path — no login, no invite, no token on the play route (see §6 for what *is* gated: only the keystroke-log export). The residual risk is that a grader plays on a laptop with no touchscreen, so `run.sh` prints a banner saying drum pad is a touch game and pointing at the URL.
+
 If the assignment contact can be asked, ask — a one-line email beats four hedges.
 
 ---
@@ -326,6 +328,10 @@ The leaderboard is **self-contained**: one `data/` directory of JSONL per server
 
 **The leaderboard is a query, not a table.** Best bps per (device_id, variant) over scored, completed, human-verified runs; ties broken by earlier timestamp. Because it derives entirely from `run`/`result`, merging runs merges the leaderboard for free — there is no leaderboard merge logic because there is no leaderboard state. Never materialize it.
 
+**A run's game is derived from its config, not read off the stored environment key (`effectiveEnv`, added 2026-07-26).** `drum-pad/index.html` is `pixel-lens/game.js` with `window.BITRATE_INPUT = 'touch'` — one implementation, two games, selected by input mode (`INPUT_MODES` in that file). The two were a *single* environment until the split on 2026-07-25, so every `pixel-lens` variant carrying `input: "touch"` is a drum-pad variant recorded before the name existed: 41 human results, including 10 of the scored 60 s set and the top six rows on the board. Reclassifying them is not a judgement call — the input mode *is* the game.
+
+This is derived in the query rather than migrated into the ledger, and the reason is the identity rule above: `config_hash` is the SHA-256 of the config **including the environment key**, so rewriting a stored environment re-mints every affected hash and orphans the runs pointing at the old ones. A migration would trade a one-field read for a permanent, irreversible rewrite of content-addressed data. So `effectiveEnv(v)` is called wherever the board reads an environment (history, CSV export, and — importantly — the round-number grouping, so a player's drum-pad round count includes the runs they played before the split). Consequence to remember: **the stored `environment` field is provenance, not truth.** Any new analysis path must go through `effectiveEnv`, and the notebook (§9 step 7) must too.
+
 **Every leaderboard row carries its exact config and can relaunch it.** The run→variant join gives each entry its full config JSON; the row shows a config summary, and clicking it opens `/play?cfg=<config_hash>` — the game boots with precisely that configuration. Reproduce-what-you-see for free, because variants are content-addressed.
 
 **Leaderboard rows expand into a run detail view.** The row shows headline numbers (bps, N, Sc, Si, accuracy); expanding it renders the stored `result.metrics` (§4.3) with the same tiles-and-charts renderer the post-run results view uses — one renderer, two call sites. This is how modality differences get diagnosed at a glance: a webcam mode and the keyboard baseline at similar bps can have opposite cadence/accuracy signatures, and the detail view shows it without opening the analysis notebook.
@@ -533,6 +539,14 @@ Realistic recruitment is ~10 known people playing a handful of games each, not a
 
 The submission is the harness frozen to the winning variant, with experiment machinery stripped. **The leaderboard, gallery, telemetry, export/merge, and device identity exist to pick the winning variant — none of them ship.** The graders receive a ZIP containing the game, `run.sh`, and the README; a scored run is stored locally at most (to render the results card) and nothing more.
 
+**The submission is two paths, not one (decided 2026-07-26; see §1 register item 7).** The hosted site is the intended path — drum pad needs a touchscreen, and a ZIP cannot hand a grader a tablet — and the offline ZIP is the independent fallback. Both are always built and both must always work.
+
+**`/` is the game in both profiles.** One constant, `shipGame` in `server/api.go`, drives the root redirect; the gallery keeps its own address at `/env/`, which is where every environment's "← gallery" link already pointed. Freezing a different variant later is a one-line change rather than a hunt through the routing table.
+
+**The README is rendered from the shipped markdown, not duplicated.** `ship/README.md` is embedded (root `readme.go`) and served at `/readme` by **both** profiles — the brief asks for the README, so it is not lab machinery. `server/readme.go` holds a hand-rolled markdown subset (headings, paragraphs, bullet lists, fenced code, tables, rules, inline code/bold/em/links) because Tier A is stdlib-only and no dependency is worth taking for one page; anything outside the subset degrades to a paragraph rather than breaking. `/readme.md` serves the raw source. One source of truth: the grader who only unzips reads the file, the grader who only opens the URL reads the rendering, and they cannot drift. It is linked from the results card — the moment a player has a score to read it against — and `run.sh` prints its location on every launch.
+
+**Settings ship visible, and players are invited to try variants (reversal, owner decision 2026-07-26).** The earlier plan stripped the settings gear as lab machinery. It stays, because tile size is not a preference — it *is* N, and the right N is a property of the player's hand and screen that no default can know. Shipping the gear with good defaults and a nudge to experiment is strictly better than shipping one guess, and every change mints a content-addressed variant, so whatever a grader lands on is exactly reproducible. This does **not** re-admit the leaderboard, gallery, telemetry, or device identity — those stay compiled out.
+
 Two build profiles from one source tree, both produced by the build script:
 
 - **`lab`** — the full harness: server, leaderboard, gallery, telemetry, export/merge. What we run daily and deploy publicly.
@@ -600,3 +614,33 @@ One framing worth including in the README: a healthy person touch-typing lands a
 8. Public deploy + §6.1 pilot machinery: invite tokens, guided session runner, `lab/pull.sh` export→merge cadence.
 9. Alternate environments from the §5 backlog.
 10. Freeze winning variant, strip, package, write README.
+
+### Step 10 — the winner is `drum-pad` (decided 2026-07-26)
+
+Measured on the deployed ledger (873 runs / 275 results, pulled 2026-07-26T20:52Z), after `effectiveEnv` reclassification (§4.4), bots excluded, scored full-length runs only:
+
+| game | modality | best bps | best/device mean | best **first** scored run | devices |
+|---|---|---|---|---|---|
+| **drum pad** | touch | **16.26** | **14.21** | **15.41** | 5 |
+| stream typing | keyboard, N=27 | 10.34 | 10.34 | 10.34 | 1 |
+| pixel lens | mouse + loupe | 7.27 | 3.93 | 7.27 | 3 |
+| parabola fall | keyboard, paced | 5.20 | 2.90 | 5.20 | 2 |
+
+Drum pad wins on every cut, **including best-first-scored-run** — the only statistic that resembles a grader's single session, and the one §3 says to weight.
+
+**This overturns §2.1's thesis that the keyboard wins structurally, and the reason is worth keeping.** The keyboard's ~40 bps ceiling is a *prose* number: it depends on overlearned digram and word motor programs, and an i.i.d. letter sequence — which rule 1 mandates — has none of them. Stripped of language structure our best typing run sustained 2.6 keystrokes/s (~10 bps), about a sixth of the prose-implied rate. Direct touch has no such dependency: a tile grid pays 6.4 bits per tap *and* the stimulus is the response (perfect S-R compatibility, nothing to translate), so it survives first contact. **The lesson generalizes: any modality whose headline throughput comes from language redundancy loses most of it under this brief.**
+
+**Tile size is N, and the measured optimum contradicts the ergonomic prediction.** Best scored run per tile size:
+
+| | 12 mm | 16 mm | 20 mm |
+|---|---|---|---|
+| **tablet** (≥600 px short edge) | 14.98 | 12.93 | **16.26** |
+| **phone** (<600 px short edge) | **15.41** | — | 11.36 |
+
+The tablet wants *bigger* tiles than the phone. Fitts's law explains it: two index fingers crossing a large screen spend their time travelling, so fewer, larger stops win; a single thumb on a phone barely travels, so travel is nearly free and a denser grid's extra bits per tap are profit. Pushing the tablet to 12 mm buys 8.1 bits/tap and *loses* overall. The previous default of 16 mm — chosen from fingertip width — is the **worst tested size on a tablet** and had never been tested on a phone.
+
+So `RECOMMENDED_CELL` is `{phone: 12, tablet: 20}` (`environments/pixel-lens/game.js`), classified off the screen's short edge rather than the user agent (reach is what matters, and iPads misreport their UA). The recommendation is badged in the first-open picker and used as the default, with copy that says it is an average and not the player's hand.
+
+**Honest caveat on the evidence: it is thin.** Five devices, 16 scored drum-pad runs, n≈4 per tile-size cell, and 7 of the 16 predate the `touch_points` telemetry field so their device class is unknown. Tablet-20 mm is the strongest signal (two different devices, both ≥15). The 12-vs-20 ordering *within* a device class is not firmly established, and more first-contact runs would be the cheapest possible improvement to this decision.
+
+**Remaining step-10 work.** The ship ZIP still embeds all eleven environments, including `word-typing`, which is quarantined for violating rule 1 — a grader who types `/env/word-typing/` finds an off-brief game in our submission, and the same URL is reachable on the public site. That is the highest-priority strip. The settings gear deliberately stays (§8).
