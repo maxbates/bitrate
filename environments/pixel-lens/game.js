@@ -52,7 +52,7 @@ const GAME_LABEL = inputMode === 'touch' ? 'drum pad' : 'pixel lens';
 let previewDepth = 0;      // look-ahead: upcoming targets shown as dimmer dots
 let cellMm = DEFAULT_CELL_MM;
 let zoomMode = 'auto'; // 'auto' (25mm apparent) or a fixed multiplier
-let audioOn = true;    // short buzz on a miss
+let audioOn = true;    // selection sounds: soft ding on a hit, buzz on a miss
 let sizeChosen = false; // has this player ever picked a tile size here?
 
 let CONFIG = null, N = 0, BITS = 0, DURATION_MS = 60000;
@@ -488,7 +488,8 @@ fieldEl.addEventListener('pointerdown', (e) => {
   if (early) earlyFlash(x, y);
   else if (inputMode === 'touch') tapFlash(x, y, verdict);
   else if (!verdict) missFlash();
-  if (!verdict) errorBuzz();
+  if (verdict) hitDing();
+  else errorBuzz();
 
   run.keylog.push({
     i: run.keylog.length,
@@ -583,6 +584,31 @@ function errorBuzz() {
     o.connect(g).connect(audioCtx.destination);
     o.start(t0);
     o.stop(t0 + 0.09);
+  } catch { /* audio is never load-bearing */ }
+}
+
+// The hit's opposite number, and deliberately the quieter of the two: a hit
+// fires several times a second at speed, so this has to be something the ear
+// can sit inside for 60 s. Sine (no harmonics to grate), high above the miss
+// buzz's 110 Hz so the two never get confused at a glance, a fifth of its
+// gain, and 55 ms so it's over before the next tap. The 4 ms attack is there
+// only to keep the envelope from clicking at this pitch.
+function hitDing() {
+  if (!audioOn) return;
+  try {
+    audioCtx = audioCtx || new AudioContext();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.value = 1046.5; // C6
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.01, t0 + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.055);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t0);
+    o.stop(t0 + 0.055);
   } catch { /* audio is never load-bearing */ }
 }
 
