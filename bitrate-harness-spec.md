@@ -644,3 +644,25 @@ So `RECOMMENDED_CELL` is `{phone: 12, tablet: 20}` (`environments/pixel-lens/gam
 **Honest caveat on the evidence: it is thin.** Five devices, 16 scored drum-pad runs, n≈4 per tile-size cell, and 7 of the 16 predate the `touch_points` telemetry field so their device class is unknown. Tablet-20 mm is the strongest signal (two different devices, both ≥15). The 12-vs-20 ordering *within* a device class is not firmly established, and more first-contact runs would be the cheapest possible improvement to this decision.
 
 **Remaining step-10 work.** The ship ZIP still embeds all eleven environments, including `word-typing`, which is quarantined for violating rule 1 — a grader who types `/env/word-typing/` finds an off-brief game in our submission, and the same URL is reachable on the public site. That is the highest-priority strip. The settings gear deliberately stays (§8).
+
+### TODO — make "arm" unmissable (owner request 2026-07-26, NOT built)
+
+**The failure mode this guards against is losing a grader's entire score.** Practice is self-paced, unlimited, and — because the practice HUD shows a trailing-60 s bit rate (§4.3) — it *looks* like the game. A grader can spend their whole familiarization period in practice, watch a plausible bps number climb, and never produce a scored run at all. Worse, they may believe they already have. Everything else in step 10 is polish; this one can zero a panelist.
+
+The affordance today is thin: `renderPracticeHelp()` emits a dim `.act.click` reading `[Enter] arm scored run`, and on narrow viewports `#mode-help .act kbd` is hidden — so on the touch device drum pad is actually played on, there is no keyboard hint and the button is the *only* path to a scored run, styled identically to `[Esc] new practice seed` next to it. Note the asymmetry to fix: `.mode-armed` already fills the banner accent-yellow *once you are armed*; nothing draws the eye to the control that gets you there.
+
+Owner's proposed design:
+
+- **Yellow-fill the arm button and give it a slow pulse** so it reads as the primary action rather than one of two equal siblings.
+- **After ~60 s of accumulated practice, suggest arming** via a modal, and turn up the arm button's emphasis (fill it) from then on.
+
+Constraints that make this less trivial than it looks — none are reasons not to do it, just the things that will break if ignored:
+
+1. **The header band must never change height mid-run** (§4.3.1, and it has bitten before: a reflow there moves `#field`, which changes the grid, which changes N). So pulse `color` / `background` / `box-shadow` / `opacity` only — never `padding`, `font-size`, `border-width`, or anything else that reflows. Or reserve the space up front.
+2. **Respect `prefers-reduced-motion`** — drop to a static fill, keep the emphasis.
+3. **The modal must never appear in `armed`, `scored`, or `done` state**, only in `practice`.
+4. **A modal on a touch game must not eat an in-flight tap.** A finger already travelling toward a tile will dismiss a modal that materializes under it, so the player never sees it — and, worse, may read the dismissal as having armed. Needs either placement clear of the grid or a short ignore-input window after it appears.
+5. **Fire once per session, not a recurring nag** — and count *practice* time, not wall-clock time, so a player who walks away isn't scolded on return.
+6. **It must not become the thing that starts the run.** Arming stays an explicit act; the modal suggests, it does not arm.
+
+Worth measuring afterwards rather than assuming: whether the 60 s prompt actually changes the share of first-session players who reach a scored run. The ledger already answers it — `is_scored` per device per session.
