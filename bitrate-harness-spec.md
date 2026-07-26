@@ -50,7 +50,13 @@ Several decisions rest on our reading of the brief, not its letter. Ranked by ri
 
 6. **Vocal symbols are symbols, not word-level targets — owner sign-off 2026-07-22.** Babble sounds (aah, ooh, mmm…), solfège syllables (do–ti), and letter names are arbitrary vocal symbols in the same sense the PDF blesses letter-labeled keys; rule 1's "no word-level targets" bans language words as targets (and the word environments that used them are gone/hidden accordingly). Includes borderline items like "aye".
 
-7. **A hosted URL is a valid submission — owner decision 2026-07-26.** Rule 5 asks for "a `run.sh` script (**or equivalent**) that launches the game with no exotic setup", and the brief's freedom clause names web apps first: "Web apps, native apps, terminal games—all fine." Opening a URL is the least exotic setup there is. We therefore submit **both**, and the redundancy is the point: the hosted site at <https://bitrate.einkgen.link> is the intended path (it is the only way to hand a grader a *touchscreen* build, which drum pad needs), and the offline ZIP with `run.sh` is the fallback that survives our EC2 instance, DNS, TLS, or the graders' corporate proxy failing inside the grading window. Neither depends on the other. No gating of any kind on the hosted path — no login, no invite, no token on the play route (see §6 for what *is* gated: only the keystroke-log export). The residual risk is that a grader plays on a laptop with no touchscreen, so `run.sh` prints a banner saying drum pad is a touch game and pointing at the URL.
+7. **The submission is the deployed web app plus the public repo; the ZIP is not submitted — owner decision 2026-07-26 (revised same day).** Rule 5 asks for "a `run.sh` script (**or equivalent**) that launches the game with no exotic setup", and the brief's freedom clause names web apps first: "Web apps, native apps, terminal games—all fine." Opening a URL is the least exotic setup there is.
+
+   The deciding argument is not convenience, it is that **drum pad is a touch game and a ZIP cannot deliver one.** Asking a grader to unzip a bundle, start a local server, find their machine's LAN address, and then join it from a tablet on the same network is more exotic setup than the brief permits, and every step is a way to lose a panelist. A URL they open on the tablet already in their hand has none of it.
+
+   Rule 5 is still satisfied **literally**, not by analogy: `run.sh` exists, works, and is *included* — in the public repo the submission links to. So the rule's artifact is delivered even though the ZIP is not the thing we ask anyone to run. **Therefore `run.sh` and the ship profile must keep working and stay CI-gated even though we no longer submit the ZIP** (§8). They are simultaneously the letter of rule 5 and the disaster fallback if the site is down during the grading window.
+
+   No gating of any kind on the hosted path — no login, no invite, no token on the play route (see §6 for what *is* gated: only the keystroke-log export). Residual risk, accepted knowingly: **if the site is unreachable during grading we have no score.** Mitigations are the retained-EBS ledger and pinned AMI (§6), and the repo's working `run.sh` as a stated fallback.
 
 If the assignment contact can be asked, ask — a one-line email beats four hedges.
 
@@ -537,9 +543,17 @@ Realistic recruitment is ~10 known people playing a handful of games each, not a
 
 ## 8. Deliverable packaging
 
-The submission is the harness frozen to the winning variant, with experiment machinery stripped. **The leaderboard, gallery, telemetry, export/merge, and device identity exist to pick the winning variant — none of them ship.** The graders receive a ZIP containing the game, `run.sh`, and the README; a scored run is stored locally at most (to render the results card) and nothing more.
+> **Superseded 2026-07-26.** This section originally read: *"The submission is the harness frozen to the winning variant, with experiment machinery stripped. The leaderboard, gallery, telemetry, export/merge, and device identity exist to pick the winning variant — none of them ship. The graders receive a ZIP containing the game, `run.sh`, and the README."* That plan assumed a keyboard game on a desktop. Drum pad won, drum pad is touch, and the whole calculus changed with it. The paragraphs below are the current decision; the original is kept because the reversal is only legible next to what it reversed.
 
-**The submission is two paths, not one (decided 2026-07-26; see §1 register item 7).** The hosted site is the intended path — drum pad needs a touchscreen, and a ZIP cannot hand a grader a tablet — and the offline ZIP is the independent fallback. Both are always built and both must always work.
+**The submission is the deployed web app at <https://bitrate.einkgen.link>, plus a link to the public source repo. We do not submit a ZIP** (owner decision 2026-07-26; see §1 register item 7 for the rule-5 reasoning). A grader opens a URL on the tablet already in their hand. There is nothing to unzip, no local server to start, no LAN address to discover, and no second device to pair — each of which was a way to lose a panelist, and all of which a touch game makes unavoidable in a bundle.
+
+**`run.sh` and the ship profile stay alive and CI-gated anyway.** They are the literal satisfaction of rule 5 ("include a `run.sh` script") via the public repo, and the fallback if the site is down during grading. Letting them rot would quietly trade a satisfied rule for an unsatisfied one. `build.sh` keeps producing the ZIP; we simply do not ask anyone to run it.
+
+**The gallery ships, and that is a feature (reversal).** The original plan stripped it as lab machinery. It stays, because the brief says *"surprise us"* and the most interesting thing we have is not the winner but the **eight games we built and the reasons the losers lost** — the graveyard is the negative-results half of the submission, and it is already honest about itself: each dead environment carries why it died, and `word-typing` is labelled *"word-level targets are banned by the brief, so it never counted"* on its gallery tile plus an off-brief banner on its own page. Shipping that is a stronger claim than hiding it. What ships is therefore the **lab** profile, deployed — not a stripped build.
+
+**What still does not ship, even now:** nothing was added to the public surface to make this true — the deployed instance keeps §6's hardening (rate limit, body cap, token-gated `/api/export*`, consent banner on non-loopback). Device identity remains a random `localStorage` id shown as a pseudonym, never an account, never PII.
+
+**Routing resolves the discovery tension.** `/` goes straight to drum pad, so a grader lands on the game being scored rather than on a chooser; the gallery lives at `/env/` and is reachable from the game's "← gallery" link, and the gallery's footer links back to drum pad, to the self-hosted README at `/readme`, and to the source repo. Direct for the graded path, discoverable for the curious one, no flag or special mode required.
 
 **`/` is the game in both profiles.** One constant, `shipGame` in `server/api.go`, drives the root redirect; the gallery keeps its own address at `/env/`, which is where every environment's "← gallery" link already pointed. Freezing a different variant later is a one-line change rather than a hunt through the routing table.
 
@@ -666,3 +680,14 @@ Constraints that make this less trivial than it looks — none are reasons not t
 6. **It must not become the thing that starts the run.** Arming stays an explicit act; the modal suggests, it does not arm.
 
 Worth measuring afterwards rather than assuming: whether the 60 s prompt actually changes the share of first-session players who reach a scored run. The ledger already answers it — `is_scored` per device per session.
+
+### TODO — README: tell the development trajectory (owner request 2026-07-26, NOT built)
+
+The README currently defends the design as if it were arrived at directly. It wasn't, and the route is more interesting than the destination — the brief asks us to surprise it, and a reversal we can show our work on is better than a conclusion asserted. Add a short section covering:
+
+- **We started with a self-contained offline bundle and a keyboard game**, on the reasoning in §2.1: keyboard is parallel, discrete, overlearned, low-latency, and touch typing's practiced ceiling (~20–40 bps) dominates every pointing modality. The packaging followed from that — a desktop game is a thing you can hand someone as a ZIP.
+- **Both halves of that turned out to be wrong, and for the same reason.** The keyboard's ceiling is a *prose* number that depends on overlearned digram programs; rule 1's i.i.d. sequence deletes them, and our best typing run sustained 2.6 keystrokes/s. Touch pays more per selection *and* needs no learned mapping, so it survives first contact — which is the only session that gets graded.
+- **Once the winner was a touch game, the packaging had to change too.** A ZIP cannot deliver a touchscreen; asking a grader to unzip, launch a server, and pair a tablet over LAN is exactly the "exotic setup" rule 5 rules out. So the deliverable became a deployed web app, with `run.sh` retained in the public repo as rule 5's artifact and the offline fallback.
+- **The gallery is the evidence.** Eight environments, four of them in the graveyard with the reason each lost. Keep it short and factual; the point is that the winner was measured against real alternatives, not asserted.
+
+Owner's steer on tone: **don't over-defend the design decisions.** State what we tried, what the numbers said, and what changed our minds. The polish of the interface matters more than the rhetoric of the README.

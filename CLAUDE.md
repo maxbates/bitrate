@@ -315,11 +315,26 @@ recorded with rationale in the spec:
   N is a property of the player's hand and screen — shipping the gear with the
   defaults that won beats shipping one guess. Does not re-admit the leaderboard,
   gallery, telemetry, or device identity.
-- **The submission is a hosted URL *and* the offline ZIP** (spec §1 register
-  item 7). Rule 5's "or equivalent" covers a URL, and the brief names web apps
-  first; the site is the only way to hand a grader a touchscreen, and the ZIP is
-  the fallback if EC2/DNS/TLS/their proxy fails during grading. No gating on the
-  play path.
+- **The submission is the deployed web app + a link to the public repo. We do
+  NOT submit a ZIP** (spec §1 register item 7, §8). A ZIP cannot deliver a
+  touchscreen, and unzip → start a server → find the LAN address → pair a tablet
+  is more exotic setup than rule 5 allows. Rule 5 is satisfied *literally*
+  instead: `run.sh` exists and is **included in the public repo**. **So `run.sh`
+  and the `ship` profile must keep working and stay CI-gated even though nobody
+  is asked to run them** — they are rule 5's artifact and the fallback if the
+  site is down during grading. Accepted risk: site unreachable during grading =
+  no score.
+- **The gallery SHIPS, and that's a feature** (reversal of "none of them ship").
+  The brief says "surprise us", and the eight environments plus a graveyard that
+  says why each loser lost is the most interesting half of the submission.
+  `word-typing` stays *visibly* quarantined — its gallery tile says "banned by
+  the brief, so it never counted" and its page carries an off-brief banner;
+  showing that is a stronger claim than hiding it. **What ships is the `lab`
+  profile, deployed** — not a stripped build. §6 hardening still applies.
+- **Routing settles discovery:** `/` → drum pad (land on the graded game, not a
+  chooser); gallery at `/env/`, reachable from the game's "← gallery" link; the
+  gallery footer links back to drum pad, `/readme`, and the source repo. No flag
+  or special mode needed.
 
 **Highest-value unbuilt UI work — make "arm" unmissable** (owner request
 2026-07-26, spec §9 step 10 TODO). Practice is unlimited and its HUD shows a
@@ -337,7 +352,12 @@ Not built: the analysis notebook (7) — **and it must use `effectiveEnv`**; the
 §6.1 pilot machinery — invite tokens, `/join`, `/pilot` guided sessions,
 `lab/pull.sh` (deliberately deferred in favour of the open sandbox; pulls are
 currently a manual `curl` against token-gated `/api/export`); v2 per-player
-calibration; and the rest of step 10 — **the ship ZIP still embeds all eleven
-environments, including the rule-1-violating `word-typing`**, reachable at
-`/env/word-typing/` in the bundle *and* on the public site. That is the
-highest-priority remaining strip.
+calibration; the README's development-trajectory section (spec §9 step 10 TODO);
+and the arm-affordance work above.
+
+**No longer a TODO:** stripping the gallery and stripping `word-typing` from the
+bundle. Both were priorities only while the deliverable was a stripped ZIP; with
+the gallery shipping deliberately and word-typing labelled off-brief in two
+places, they're resolved by the decision rather than by code. `.off-brief` in
+`gallery.css` is now dead CSS (the real banner lives in
+`word-typing/index.html`).

@@ -9,24 +9,36 @@ B = log2(N − 1) · max(Sc − Si, 0) / t     bits per second
 
 One tile on a grid lights up. You tap it. That's the whole game.
 
-## Run it
+## Play it
 
-**On the web — the intended path.** Open <https://bitrate.einkgen.link> on a
-**tablet or phone**. Nothing to install.
+**Open <https://bitrate.einkgen.link> on a tablet or phone.** That's the whole
+setup. Nothing to install, no bundle to unpack.
 
-**Locally, offline.** From the bundle:
+You want a **touchscreen** — drum pad is a direct-touch game, and played with a
+mouse it becomes a different and worse game (which is why the mouse-driven
+variant is a separate entry in the gallery rather than a setting here).
+
+**Other things on the site:** the [gallery](/env/) has the seven other
+environments we built and a graveyard of the ones that lost, each with the
+reason it lost. The leaderboard ranks the contenders.
+
+### Running it yourself
+
+The source is at <https://github.com/maxbates/bitrate>. From a clone, or from
+`dist/bitrate.zip` built by `build.sh`:
 
 ```
 bash run.sh
 ```
 
 No installation, no network, no runtime dependencies — the script starts a
-loopback-only server, prints a URL, and opens your browser. Linux (x86_64 /
-arm64) is the supported platform; macOS binaries ride along as a courtesy.
+loopback-only server, prints a URL, and opens your browser. It works fully
+offline. Linux (x86_64 / arm64) is the supported platform; macOS binaries ride
+along as a courtesy.
 
-Either way you want a **touchscreen**. Drum pad is a direct-touch game; played
-with a mouse it becomes a different and worse game, which is why the
-mouse-driven variant is a separate thing entirely.
+This path exists for completeness and as a fallback, but it is not the intended
+one: a local server on a laptop cannot give you a touchscreen, and pairing a
+tablet to it over your LAN is exactly the setup the hosted URL avoids.
 
 ## How to play
 
@@ -145,9 +157,16 @@ ceiling here is the finger, not the alphabet.
 - **Everything is local.** The offline bundle makes no network requests of any
   kind; the run is scored by the loopback server the launcher started.
 
-## What's in the box
+## How it's built
 
-A single static Go binary (standard library only, no cgo) that serves an
-embedded vanilla-JS frontend. No framework, no build step, no CDN, no package
-manager, nothing to install. `run.sh` dispatches on `uname` to the right
-prebuilt binary.
+A single static Go binary — **standard library only, no cgo, no dependencies**
+(CI asserts `go.mod` stays empty) — serving an embedded vanilla-JS frontend. No
+framework, no build step, no bundler, no CDN, no package manager. Charts are
+hand-rolled SVG, tones are WebAudio, and this page is rendered by a small
+markdown subset in the server itself.
+
+Targets are drawn server-side from a seeded generator, so any run is replayable
+from its seed, and the score is recomputed from the tap log rather than trusted
+from the client.
+
+Source: <https://github.com/maxbates/bitrate>.

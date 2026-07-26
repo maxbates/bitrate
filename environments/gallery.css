@@ -189,3 +189,31 @@ table.lb { width: 100%; border-collapse: collapse; }
   text-transform: uppercase;
 }
 .off-brief-note { color: var(--err); opacity: .8; }
+
+/* Footer: the non-game half of the deliverable — design notes and source.
+   Centred and quiet; it is a signpost, not a call to action. */
+#gal-foot {
+  margin: 3.5rem 0 1rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--faint);
+  text-align: center;
+  font-size: 13px;
+  color: var(--dim);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .5rem 1rem;
+}
+#gal-foot a {
+  color: var(--dim);
+  text-decoration: none;
+  border-bottom: 1px solid var(--faint);
+}
+#gal-foot a:hover { color: var(--fg); border-bottom-color: var(--dim); }
+/* The separators are decoration between links; on a wrapped narrow layout the
+   gap already does that job, so they only earn their place on one line. */
+#gal-foot .sep { color: var(--faint); }
+@media (max-width: 480px) {
+  #gal-foot { flex-direction: column; gap: .75rem; }
+  #gal-foot .sep { display: none; }
+}
