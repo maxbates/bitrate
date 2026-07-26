@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"bitrate"
 )
@@ -117,7 +118,25 @@ func main() {
 		go openBrowser(url)
 	}
 
-	log.Fatal(http.Serve(ln, publicHardening(srv.routes())))
+	// Timeouts, because the deployed site is now the whole deliverable and a
+	// wedged connection is indistinguishable from an outage to a grader. Bare
+	// http.Serve applies none of these: a client that opens a socket and never
+	// finishes its request headers holds a goroutine and its buffers forever, so
+	// enough of them exhaust the box without anything crashing — which is worse
+	// than crashing, since systemd's Restart=always can't fix what hasn't died.
+	//
+	// Read side is tight (that's the abuse vector). Write side is deliberately
+	// slack: the game's responses are tiny, but /api/export with keystroke logs
+	// is multi-megabyte and pulling it over a slow link must not get cut off.
+	httpSrv := &http.Server{
+		Handler:           publicHardening(srv.routes()),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	log.Fatal(httpSrv.Serve(ln))
 }
 
 // lanIPs returns this host's private IPv4 addresses (non-loopback), best-effort,

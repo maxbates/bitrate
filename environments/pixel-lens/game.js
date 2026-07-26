@@ -341,12 +341,82 @@ function configLabel() {
     (previewDepth ? ' · look ' + previewDepth : '');
 }
 
+// ---- the arm affordance ----
+// Practice is unlimited and its HUD shows a trailing-60 s bit rate, so practice
+// *looks* like the game. The failure mode this guards against is a first-session
+// player who never arms and therefore never produces a score at all — worse, who
+// believes the practice number was their score. So the arm control is the
+// primary action, not one of two equal siblings, and it escalates:
+//
+//   tier 1, always in practice — accent outline plus a slow pulse.
+//   tier 2, after ARM_PROMPT_MS of practice — filled, plus one suggestion card.
+//
+// Both tiers are colour-only. The header band must never change height mid-run
+// (spec §4.3.1): a reflow there moves #field, which changes the grid, which
+// changes N. Nothing here animates padding, font-size, or border-width.
+const ARM_PROMPT_MS = 60000;
+let practiceMs = 0;         // accumulated *practice* time, not wall clock
+let armPromptShown = false; // once per session — a nag is worse than a hint
+
 // The practice corner: the two run controls. What the game is set to, and
 // the button that changes it, live in the header's middle zone.
 function renderPracticeHelp() {
   modeHelp.innerHTML =
-    '<button type="button" class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</button>' +
+    '<button type="button" class="act click arm-cta' + (armPromptShown ? ' arm-urgent' : '') +
+    '" data-act="arm"><kbd>Enter</kbd>arm scored run</button>' +
     '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</button>';
+}
+
+// Counts seconds of practice actually played: `run.started` gates on the first
+// selection, so staring at the board — or walking away — never accrues time and
+// never earns a scolding.
+function tickArmPrompt() {
+  if (armPromptShown || state !== 'practice' || !run || !run.started) return;
+  practiceMs += 1000;
+  if (practiceMs >= ARM_PROMPT_MS) showArmPrompt();
+}
+
+function closeArmPrompt() {
+  const el = $('arm-prompt');
+  if (el) el.remove();
+}
+
+// A suggestion, shown once. The primary button arms — an explicit click is
+// explicit consent, and arming still doesn't start the clock (the first tap
+// does), so there is no way for this card to accidentally burn a scored run.
+function showArmPrompt() {
+  if (armPromptShown || $('arm-prompt')) return;
+  armPromptShown = true;
+  renderPracticeHelp(); // escalate the header button to tier 2
+
+  const wrap = document.createElement('div');
+  wrap.id = 'arm-prompt';
+  wrap.innerHTML =
+    '<div class="ap-card">' +
+    '<div class="ap-title">practice doesn\'t score</div>' +
+    '<div class="ap-body">You\'ve had a minute on the board. Nothing so far counts — ' +
+    'the bit rate up top is just your recent practice pace. ' +
+    'A <b>scored run</b> is a single 60-second attempt, and it starts on your first ' +
+    (inputMode === 'touch' ? 'tap' : 'click') + ' after you arm it.</div>' +
+    '<div class="ap-acts">' +
+    '<button type="button" class="ap-go" disabled>arm the 60 s run</button>' +
+    '<button type="button" class="ap-stay" disabled>keep practicing</button>' +
+    '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+
+  // A finger already travelling toward a tile must not dismiss a card it never
+  // saw — and must not fall through to the grid either. The backdrop swallows
+  // the tap (it is opaque to pointers from the start) while the buttons stay
+  // disabled just long enough for that in-flight tap to land harmlessly.
+  setTimeout(() => {
+    for (const b of wrap.querySelectorAll('button')) b.disabled = false;
+  }, 400);
+
+  wrap.addEventListener('click', (e) => {
+    if (e.target.closest('.ap-go')) { closeArmPrompt(); armScoredRun().catch(showError); }
+    else if (e.target.closest('.ap-stay')) { closeArmPrompt(); }
+  });
 }
 
 function setState(next) {
@@ -359,6 +429,9 @@ function setState(next) {
   if (next !== 'practice') $('hud-spark').innerHTML = '';
   if (next === 'done') { hidePreviews(); targetEl.hidden = true; }
   if (next !== 'practice' && sheetOpen) closeSheet();
+  // The suggestion card belongs to practice and nothing else: leaving practice
+  // by any route (armed, scored, results, error) takes it with you.
+  if (next !== 'practice') closeArmPrompt();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
     modeBanner.className = 'mode-practice';
@@ -889,13 +962,43 @@ function segOn(id, pred) {
   for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', pred(b));
 }
 
+// Marks the *recommended* option, as distinct from the selected one. Two
+// different questions — "what am I on" and "what should I be on" — so two
+// different marks, and a player who has wandered can always see the way back.
+function segRec(id, pred) {
+  for (const b of $(id).querySelectorAll('button')) b.classList.toggle('rec', pred(b));
+}
+
+// The shipped defaults, in one place: the settings the leaderboard's best runs
+// actually used, per device class (spec §9 step 10 — tablet 20 mm / phone 12 mm,
+// one look-ahead dot, error sound on). The first-open picker badges the tile
+// size; this is the same answer, kept visible inside the sheet.
+function recommendedSettings() {
+  return {
+    cell_mm: recommendedCell(inputMode),
+    preview: DEFAULT_PREVIEW[inputMode],
+    audio: true,
+  };
+}
+
+function atRecommended() {
+  const r = recommendedSettings();
+  return cellMm === r.cell_mm && previewDepth === r.preview && audioOn === r.audio;
+}
+
 function syncSheet() {
   const loupeOn = inputMode === 'mouse';
+  const rec = recommendedSettings();
   segOn('seg-cell', (b) => Number(b.dataset.v) === cellMm);
   segOn('seg-zoom', (b) => b.dataset.v === String(zoomMode));
   segOn('seg-lens', (b) => Number(b.dataset.v) === loupeR);
   segOn('seg-preview', (b) => Number(b.dataset.v) === previewDepth);
   segOn('seg-audio', (b) => (b.dataset.v === 'on') === audioOn);
+  segRec('seg-cell', (b) => Number(b.dataset.v) === rec.cell_mm);
+  segRec('seg-preview', (b) => Number(b.dataset.v) === rec.preview);
+  segRec('seg-audio', (b) => (b.dataset.v === 'on') === rec.audio);
+  const reset = $('sh-reset');
+  if (reset) reset.hidden = atRecommended();
   $('row-zoom').hidden = !loupeOn; // lens controls are meaningless in touch mode
   $('row-lens').hidden = !loupeOn;
   $('sheet-info').textContent =
@@ -937,6 +1040,28 @@ $('seg-audio').addEventListener('click', (e) => {
   segApply(() => { audioOn = b.dataset.v === 'on'; });
   ensureAudio(); // switching it on is itself the gesture iOS wants
 });
+
+// "Back to recommended" — injected from here rather than added to each env's
+// index.html, because one implementation backs both games and a control that
+// exists in only one of them is a bug waiting to happen. Hidden whenever the
+// player is already on the defaults, so it never nags.
+(function mountSheetReset() {
+  const sheet = $('sheet');
+  const info = $('sheet-info');
+  if (!sheet || !info) return;
+  const row = document.createElement('div');
+  row.className = 'sh-row sh-row-reset';
+  row.innerHTML =
+    '<span class="sh-reclegend">recommended</span>' +
+    '<button type="button" id="sh-reset" class="sh-reset" hidden>back to recommended</button>';
+  sheet.insertBefore(row, info);
+  row.addEventListener('click', (e) => {
+    if (!e.target.closest('#sh-reset')) return;
+    e.target.blur();
+    const r = recommendedSettings();
+    segApply(() => { cellMm = r.cell_mm; previewDepth = r.preview; audioOn = r.audio; });
+  });
+})();
 
 $('seg-zoom').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -1223,7 +1348,7 @@ function renderHud() {
   window.BitrateResults.renderSpark('hud-spark', run, BITS, nowT);
 }
 
-setInterval(renderHud, 1000);
+setInterval(() => { renderHud(); tickArmPrompt(); }, 1000);
 
 // ---- results view (shared renderer — spec §4.3) ----
 
@@ -1302,6 +1427,13 @@ window.pixelDebug = {
   // "you hit the green dot" reaction.
   previewCells: () => (run ? run.seq.slice(run.pos + 1, run.pos + 1 + previewDepth) : []),
   earlyFlashCount: () => earlyFlashes,
+  // The arm affordance: read the practice clock, or jump straight to the
+  // suggestion card instead of playing for a real minute to see it.
+  practiceMs: () => practiceMs,
+  armPromptShown: () => armPromptShown,
+  showArmPrompt: () => showArmPrompt(),
+  recommended: () => recommendedSettings(),
+  atRecommended: () => atRecommended(),
   // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
   // current input mode) — exercises the same handler a finger/mouse would.
   tapCell: (idx, type) => {

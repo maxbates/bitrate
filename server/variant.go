@@ -14,6 +14,12 @@ import (
 	"math"
 )
 
+// MaxDurationS bounds a bout's configured length. The brief's scored run is
+// 60 s; this is generous headroom for practice bouts while keeping a
+// client-supplied duration from becoming an unbounded allocation downstream
+// (see ComputeMetrics).
+const MaxDurationS = 3600.0
+
 // Config is the parsed, validated subset of a variant config that the
 // server needs. The full document is preserved verbatim-canonicalized for
 // hashing and storage.
@@ -110,8 +116,15 @@ func ParseConfig(raw map[string]any) (*Config, error) {
 	}
 	backspace, _ := raw["backspace"].(bool)
 	duration, _ := raw["duration_s"].(float64)
-	if duration <= 0 {
-		return nil, errors.New("config.duration_s must be > 0")
+	// Bounded at both ends, not just above zero. This value is client-supplied
+	// and reaches ComputeMetrics as the divisor for the pace-bin allocation, so
+	// an unbounded duration is an unbounded `make` — a single unauthenticated
+	// start+submit could request billions of bins and take the process down with
+	// a runtime OOM (which is a throw, not a panic, so net/http's per-connection
+	// recover cannot save it). MaxDurationS is far above anything a real bout
+	// uses; the brief's scored run is 60 s.
+	if duration <= 0 || duration > MaxDurationS || math.IsNaN(duration) {
+		return nil, fmt.Errorf("config.duration_s must be > 0 and <= %g", MaxDurationS)
 	}
 	// chunk_size: visual grouping only (a separator glyph, never a target —
 	// spec §2.3); null disables it.

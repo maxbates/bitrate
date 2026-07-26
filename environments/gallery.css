@@ -213,7 +213,27 @@ table.lb { width: 100%; border-collapse: collapse; }
 /* The separators are decoration between links; on a wrapped narrow layout the
    gap already does that job, so they only earn their place on one line. */
 #gal-foot .sep { color: var(--faint); }
+
+#gal-foot { flex-direction: column; }
+.gf-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .5rem 1rem;
+}
+/* Consent notice: stated plainly, sized to be read rather than skimmed past.
+   Previously a fixed banner over every page — it belongs here instead, where
+   the data it describes is actually on display (the leaderboard above). */
+.gf-consent {
+  max-width: 70ch;
+  margin: 1.5rem auto 0;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.65;
+  text-align: left;
+}
+.gf-consent b { color: var(--fg); font-weight: normal; }
 @media (max-width: 480px) {
-  #gal-foot { flex-direction: column; gap: .75rem; }
-  #gal-foot .sep { display: none; }
+  .gf-links { flex-direction: column; gap: .75rem; }
+  .gf-links .sep { display: none; }
 }

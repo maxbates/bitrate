@@ -336,17 +336,35 @@ recorded with rationale in the spec:
   gallery footer links back to drum pad, `/readme`, and the source repo. No flag
   or special mode needed.
 
-**Highest-value unbuilt UI work — make "arm" unmissable** (owner request
-2026-07-26, spec §9 step 10 TODO). Practice is unlimited and its HUD shows a
-trailing-60 s bps, so practice *looks like the game*: a grader can burn their
-familiarization period in practice, watch a plausible number, and never produce
-a scored run — or think they already did. The arm control is a dim button
-styled identically to `new practice seed`, and on narrow viewports the `<kbd>`
-hint is hidden, so on touch it is the only path to a scored run with nothing
-drawing the eye to it. Plan: yellow-fill + slow pulse, and a one-shot suggestion
-modal after ~60 s of accumulated practice. **Constraint that will bite:** the
-header band must never change height mid-run, so animate colour/shadow/opacity
-only — never padding or font-size.
+**Built 2026-07-26 — the arm affordance.** Practice is unlimited and its HUD
+shows a trailing-60 s bps, so practice *looked like the game*; a grader could
+burn their familiarization in it and never score. Now two **colour-only** tiers
+(the header band must never change height mid-run — a reflow moves `#field`,
+changing the grid, changing N): accent outline + slow pulse always, and after 60 s
+of *accumulated practice* a one-shot card plus a filled button. The card's
+backdrop is pointer-opaque immediately while its buttons enable after 400 ms, so
+a finger already travelling toward a tile can neither dismiss it unseen nor fall
+through to the grid. Honours `prefers-reduced-motion`. Drive it without waiting a
+minute: `pixelDebug.showArmPrompt()`.
+
+**Built 2026-07-26 — recommended settings, surfaced three ways.**
+`RECOMMENDED_CELL` + `DEFAULT_PREVIEW` in `pixel-lens/game.js` are the single
+source: badged in the first-open picker, dotted in the settings sheet (`.rec` — a
+different mark from `.on`, because "what am I on" and "what should I be on" are
+different questions), and restorable via "back to recommended". Values come from
+the actual best scored runs, not taste.
+
+**Built 2026-07-26 — liveness hardening** (spec §8, tests in
+`server/liveness_test.go`). The site is now the deliverable, so a failed request
+is fine and a dead process is not. Fixed one critical (unbounded pace-bin
+allocation from client `duration_s`/`elapsed_ms` — a fatal OOM *throw*, which
+`net/http`'s recover cannot catch, reachable in two unauthenticated requests and
+live in the ship build) and three high (unevicted `pending` map; a corrupt ledger
+line making startup permanently fatal into a 10 s restart loop; no HTTP
+timeouts). Plus two correctness bugs: the persisted keystroke log was silently
+corrupted on any run with a past-boundary tap (`keys[:0]` aliasing the slice that
+gets written), and a failed submit destroyed its own retry. See the spec for what
+was deliberately left unfixed and why.
 
 Not built: the analysis notebook (7) — **and it must use `effectiveEnv`**; the
 §6.1 pilot machinery — invite tokens, `/join`, `/pilot` guided sessions,

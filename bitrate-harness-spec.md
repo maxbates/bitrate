@@ -681,6 +681,43 @@ Constraints that make this less trivial than it looks — none are reasons not t
 
 Worth measuring afterwards rather than assuming: whether the 60 s prompt actually changes the share of first-session players who reach a scored run. The ledger already answers it — `is_scored` per device per session.
 
+### Liveness hardening (2026-07-26) — the site is now the deliverable
+
+Shipping the deployed app instead of a ZIP changes the threat model: **a request that fails is acceptable; a process that dies is not.** The game, the HUD, and the scoring preview are all client-side, so a 500 costs one submission, while a dead process costs every grader still to play. An audit of the server against that standard found one critical hole and three high ones. All are fixed, with regression tests in `server/liveness_test.go`.
+
+- **Critical — unbounded allocation from a client number (`metrics.go`).** `ComputeMetrics` sized its pace-bin slice from `tSec` *before* any guard, and `tSec` came from either `config.duration_s` (validated only as `> 0`) or a practice run's raw `elapsed_ms` (not validated at all). `duration_s: 1e10` requests 2×10⁹ bins — a fatal out-of-memory **throw**, which unlike a panic `net/http`'s per-connection `recover` cannot contain. Two unauthenticated requests, and it was live in the ship build too. Fixed at three layers: `MaxDurationS` (3600) bounds the config, the practice path clamps its own elapsed, and `MaxPaceBins` caps the allocation regardless of caller. The float comparison happens *before* the int conversion, because `int(huge float64)` is undefined and wraps negative on amd64/arm64 — a post-cast clamp would have missed the worst values.
+- **High — `pending` map never evicted (`api.go`).** Abandoned runs are routine (closed tab, reload, wandering off), and each entry retained the client's config document plus a 2000-symbol sequence. Now swept by TTL on the start path — the thing that grows the map tidies it, so there's no background goroutine to supervise, which matters because an unrecovered goroutine is itself a process-killer — plus an oldest-first cap so a burst degrades in-flight runs rather than killing the site.
+- **High — a corrupt ledger line made startup permanently fatal (`store.go`).** Appends are a single non-atomic write, so a crash or full disk truncates one line; `loadJSONL` then returned an error and `main` called `log.Fatalf`, which `Restart=always` turned into a 10-second crash loop. **This was the compounding failure: the ledger's own crash damage became the reason it could never load again.** Now skipped and loudly logged. One unreadable line costs one run; refusing to start costs everything.
+- **High — no HTTP timeouts (`main.go`).** Bare `http.Serve` sets none, so a half-open connection pinned a goroutine and its buffers forever. Enough of them exhaust the box *without crashing* — worse than crashing, because `Restart=always` cannot fix what hasn't died. Read side is tight (that's the abuse vector); write side is deliberately slack so a multi-megabyte keystroke export over a slow link isn't cut off.
+
+Two correctness bugs surfaced by the same audit and fixed with it:
+
+- **The persisted keystroke log was silently corrupted** whenever a scored run had a tap past the 60 s boundary, which is routine. The boundary filter used `keys[:0]`, aliasing the slice that was later written to disk, so the stored log was the survivors followed by a stale tail. The log is the record everything else recomputes from, so this was quietly poisoning the ledger. It now filters into a fresh slice, and the **full** log is persisted deliberately — post-boundary taps are worth keeping and the filter is reproducible from `duration_s`.
+- **A failed submit destroyed its own retry.** The `pending` entry was deleted before validation and before anything was durable, so a transient storage error 500'd the submit *and* made the run permanently unknown. Removal now happens after the result is stored: still exactly-once, but a failure is retryable. During a graded window this is the difference between a hiccup and a lost score.
+
+Known and **not** fixed, with reasons — none can kill the process:
+
+- **One file descriptor leaks per completed run** (`store.go` caches every append target and never closes the per-run keystroke files). Bounded by `RLIMIT_NOFILE`, so it needs ~500 k runs on systemd's limit; on exhaustion submissions start failing but the process lives. Worth fixing, not urgent. The same mechanism holds N descriptors open while merging an N-run bundle.
+- **`/api/export?include=keystrokes` faults the whole corpus into memory.** Lab-only (compiled out of ship) and token-gated on the public deploy, so it is an operator foot-gun rather than an attack surface.
+- **`IsFirstContact` is O(all runs) under `RLock`** on the run-start path, and `buildHistory` holds `RLock` across its sort. Degradation only, at current ledger size (~900 runs) immeasurable.
+- **`merge` trusts bundle-supplied run ids as path components.** An offline CLI over operator-chosen input; worth a hex check when merge is next touched.
+
+Verified safe by call path rather than assumed: the only two goroutines in the tree (`store.writer`, `openBrowser`), all three mutexes (no upgrades, no I/O or channel sends under lock, `PutVariant`'s early return correctly balanced), every type assertion (all two-value form), `sequence.go`'s modulo (alphabet size ≥ 2 is enforced upstream), and `scoring.go`/`metrics.go`'s index arithmetic.
+
+### TODO — make the repo public (owner decision 2026-07-26, NOT done)
+
+The submission links to <https://github.com/maxbates/bitrate>, which is private, so **the gallery footer link 404s until this is flipped**. It is deliberately a separate, deliberate act rather than something done in passing, because going public is irreversible in the ways that matter: git history is permanent, and forks and caches outlive any later deletion.
+
+Known and accepted before flipping: **`swe-homework.pdf` is tracked and stays tracked** (owner decision, same day) — the brief is published along with the repo, and it is also served at `/assignment.pdf` on the public site. That is a conscious choice, not an oversight; it makes the harness checkable against the brief it was built from.
+
+Verified clean at the time of the decision, and worth re-checking immediately before flipping: no ledger or run data is tracked (`data/` is ignored), no export token (it lives at `~/.bitrate/export-token`), and no AWS account id, Elastic IP, or access key appears in any tracked file.
+
+### TODO — settle the final settings (owner request 2026-07-26)
+
+Defaults are **defined and shipped now**, taken from the best scored runs rather than from taste: tablet **20 mm / 1 look-ahead dot**, phone **12 mm / 1 dot**, error sound on. Those are the exact configs behind the 16.26 bps (tablet, 14×6, N=84) and 15.41 bps (phone, 7×11, N=77) runs, verified against the pulled ledger — not interpolated. `RECOMMENDED_CELL` and `DEFAULT_PREVIEW` in `environments/pixel-lens/game.js` are the single source, surfaced three ways: badged in the first-open picker, dotted in the settings sheet, and restorable there via "back to recommended".
+
+What is *not* settled is whether those are the right defaults. The evidence is n≈4 per tile-size cell across 5 devices (§9 step 10), and the 12-vs-20 mm ordering within a device class is not firmly established. Re-run this decision if more first-contact data lands; the numbers to beat are in the table above. **Leave the settings gear visible either way** (§8) — the point of shipping it is that no default knows the player's hand.
+
 ### TODO — README: tell the development trajectory (owner request 2026-07-26, NOT built)
 
 The README currently defends the design as if it were arrived at directly. It wasn't, and the route is more interesting than the destination — the brief asks us to surprise it, and a reversal we can show our work on is better than a conclusion asserted. Add a short section covering:
