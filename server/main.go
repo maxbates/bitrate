@@ -20,6 +20,8 @@ import (
 
 func hexEncode(b []byte) string { return hex.EncodeToString(b) }
 
+func isFlagArg(a string) bool { return len(a) > 1 && a[0] == '-' }
+
 func main() {
 	var (
 		addr      = flag.String("addr", "127.0.0.1:0", "listen address (loopback, OS-assigned port — spec §8)")
@@ -28,7 +30,32 @@ func main() {
 		devRoot   = flag.String("dev-root", "environments", "asset root for -dev")
 		noBrowser = flag.Bool("no-browser", false, "do not try to open the browser")
 	)
+	// `bitrate merge <bundle>` is a subcommand, not a flag mode (spec §4.4:
+	// merge is offline and never an endpoint). Parse flags after it so
+	// `-data` still selects the ledger to merge into.
+	isMerge := len(os.Args) > 1 && os.Args[1] == "merge"
+	var mergeArgs []string
+	if isMerge {
+		rest := os.Args[2:]
+		for len(rest) > 0 && !isFlagArg(rest[0]) {
+			mergeArgs = append(mergeArgs, rest[0])
+			rest = rest[1:]
+		}
+		os.Args = append([]string{os.Args[0]}, rest...)
+	}
 	flag.Parse()
+
+	if isMerge {
+		if *dataDir == "data" && buildProfile == "lab" {
+			if home, err := os.UserHomeDir(); err == nil {
+				*dataDir = filepath.Join(home, ".bitrate", "data")
+			}
+		}
+		if err := runMerge(mergeArgs, *dataDir); err != nil {
+			log.Fatalf("merge: %v", err)
+		}
+		return
+	}
 
 	// Lab persists to one stable, home-anchored ledger regardless of where the
 	// server is launched from (so runs never scatter into per-cwd data/ dirs).
