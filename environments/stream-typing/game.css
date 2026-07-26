@@ -29,7 +29,12 @@ body {
   color: var(--fg);
   font-family: var(--mono);
   overflow: hidden;
+  /* Both spellings: WebKit (iOS Safari) only honours the prefixed property, so
+     without it a long-press on the stream selects the text and raises the
+     callout menu mid-run. #kbd-catcher re-enables selection for itself. */
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* ---- stream ---- */
@@ -44,6 +49,12 @@ body {
   left: 0;
   right: 0;
   bottom: var(--kbd-inset, 0px);
+  /* The stream is a target, not a document: no selection, no callout, no
+     grey tap flash when a finger lands on it to raise the keyboard. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
   display: flex;
   flex-direction: column;
   justify-content: center;

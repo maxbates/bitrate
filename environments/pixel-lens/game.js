@@ -79,7 +79,7 @@ const GAME_LABEL = inputMode === 'touch' ? 'drum pad' : 'pixel lens';
 let previewDepth = 0;      // look-ahead: upcoming targets shown as dimmer dots
 let cellMm = DEFAULT_CELL_MM;
 let zoomMode = 'auto'; // 'auto' (25mm apparent) or a fixed multiplier
-let audioOn = true;    // short buzz on a miss
+let audioOn = true;    // selection sounds: soft ding on a hit, buzz on a miss
 let sizeChosen = false; // has this player ever picked a tile size here?
 
 let CONFIG = null, N = 0, BITS = 0, DURATION_MS = 60000;
@@ -588,7 +588,8 @@ fieldEl.addEventListener('pointerdown', (e) => {
   if (early) earlyFlash();
   else if (inputMode === 'touch') tapFlash(x, y, verdict);
   else if (!verdict) missFlash();
-  if (!verdict) errorBuzz();
+  if (verdict) hitDing();
+  else errorBuzz();
 
   run.keylog.push({
     i: run.keylog.length,
@@ -643,10 +644,19 @@ function isPreviewCell(cell) {
 // tapped the green one" is unmistakable at a glance. No ring at the tap point —
 // the border alone carries it, and a red circle drawn over the green dot you
 // just hit reads as two separate errors (owner's call, 2026-07-26).
+//
+// The pulse says *wrong*; the notice says *what instead*. It rides in the footer
+// strip below the grid — the one band that is never a cell — and is
+// pointer-events: none, so it can never eat a tap or stall the run. Repeat
+// offences just restart its timer. Advance-always means the tap has already
+// consumed the target by the time this shows, so the copy is a standing
+// instruction and never points at a cell that has since moved.
 let earlyFlashes = 0;
 
 function earlyFlash() {
   earlyFlashes++;
+  showNotice('<i class="sw-next"></i> <b>look-ahead</b> dot — tap the ' +
+    '<i class="sw-now"></i> <b>yellow square</b>', 'warn early', 3000);
   fieldEl.classList.remove('err-pulse');
   void fieldEl.offsetWidth; // restart the pulse on back-to-back early taps
   fieldEl.classList.add('err-pulse');
@@ -698,6 +708,31 @@ function errorBuzz() {
     o.connect(g).connect(audioCtx.destination);
     o.start(t0);
     o.stop(t0 + 0.1);
+  } catch { /* audio is never load-bearing */ }
+}
+
+// The hit's opposite number, and deliberately the quieter of the two: a hit
+// fires several times a second at speed, so this has to be something the ear
+// can sit inside for 60 s. Sine (no harmonics to grate), high above the miss
+// buzz's 220 Hz so the two never get confused at a glance, a twelfth of its
+// gain, and 55 ms so it's over before the next tap. The 4 ms attack is there
+// only to keep the envelope from clicking at this pitch.
+function hitDing() {
+  if (!audioOn) return;
+  try {
+    audioCtx = audioCtx || new AudioContext();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.value = 1046.5; // C6
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.01, t0 + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.055);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t0);
+    o.stop(t0 + 0.055);
   } catch { /* audio is never load-bearing */ }
 }
 
@@ -1427,6 +1462,8 @@ window.pixelDebug = {
   // "you hit the green dot" reaction.
   previewCells: () => (run ? run.seq.slice(run.pos + 1, run.pos + 1 + previewDepth) : []),
   earlyFlashCount: () => earlyFlashes,
+  // The "tap the yellow square" line: '' when nothing is showing.
+  noticeText: () => ($('notice').hidden ? '' : $('notice').textContent),
   // The arm affordance: read the practice clock, or jump straight to the
   // suggestion card instead of playing for a real minute to see it.
   practiceMs: () => practiceMs,
@@ -1456,7 +1493,19 @@ ensurePreviewPool(MAX_PREVIEW);
 renderCellSeg();
 buildConfig();
 scheduleFlush(1500);
-applyCfgParam().then(() => startRun(false)).catch(showError);
+applyCfgParam().then(() => startRun(false)).then(showColorHint).catch(showError);
+
+// Which colour means "now" is the one thing a first-session player has to be
+// told, and the cheapest moment to tell them is before the first tap. Once per
+// page load, in practice, and only when there are look-ahead dots to confuse it
+// with — after that the miss reaction (earlyFlash) does the teaching.
+let colorHintShown = false;
+function showColorHint() {
+  if (colorHintShown || !previewDepth || document.body.classList.contains('picking')) return;
+  colorHintShown = true;
+  showNotice('<i class="sw-now"></i> <b>yellow</b> = tap now · ' +
+    '<i class="sw-next"></i> green = next', 'early', 6000);
+}
 
 // ---- first open: pick a tile size ----
 // Cell size is the one setting that changes what the game *is* — it sets N and
@@ -1531,7 +1580,7 @@ function showSizePicker() {
     wrap.remove();
     document.body.classList.remove('picking');
     buildConfig();
-    toPractice();
+    toPractice().then(showColorHint);
   });
 }
 

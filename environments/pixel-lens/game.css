@@ -30,7 +30,12 @@ body {
   color: var(--fg);
   font-family: var(--mono);
   overflow: hidden;
+  /* Both spellings: WebKit (iOS Safari) only honours the prefixed property, so
+     without it a long-press on the grid selects the page and raises the
+     callout menu mid-run. */
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* ---- top bar ---- */
@@ -57,10 +62,14 @@ body {
   cursor: none; /* the loupe is the cursor (mouse mode); JS sets auto for touch */
   overflow: hidden;
   opacity: .999; /* own compositing layer */
-  /* touch mode: taps must not scroll, zoom, or flash the tap-highlight */
+  /* touch mode: taps must not scroll, zoom, select, or flash the
+     tap-highlight. A drag across the grid is a stream of taps, never a
+     selection gesture. */
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* The playable grid, inset from the field edges (lens never buried more
@@ -493,6 +502,45 @@ body.picking #device-warn { display: none; }
    live scored run, and a tap it swallowed would be silently lost time. */
 #notice { pointer-events: none; }
 #notice a { pointer-events: auto; }
+
+/* The "you tapped a look-ahead dot" line. It fires mid-run, so it must never
+   take a tap (pointer-events: none) and never move the field: it is fixed in
+   the footer strip the grid already leaves empty. Text is centred on one line
+   at phone width — keep the copy short. */
+#notice.early {
+  pointer-events: none;
+  /* Clear of the gallery link, which shares the footer strip on the left. */
+  bottom: 54px;
+  /* #notice is centred with left: 50%, which leaves an auto-width box only half
+     the viewport wide — enough to wrap this line into four on a phone.
+     max-content + a real max-width lets it use the full width instead. */
+  width: max-content;
+  max-width: min(92vw, 560px);
+  text-align: center;
+  line-height: 1.5;
+  /* The strip is dark but the notice can wrap up over the grid's last row on a
+     phone — the glow keeps it legible without a box that would look like a
+     dialog demanding an answer. */
+  text-shadow: 0 0 10px var(--bg), 0 0 4px var(--bg);
+}
+
+/* Colour swatches drawn as the game draws them — filled yellow cell vs. green
+   bull's-eye — so the sentence teaches the mapping instead of naming it. */
+#notice .sw-now,
+#notice .sw-next {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  vertical-align: -1px;
+}
+#notice .sw-now {
+  background: var(--accent);
+  border-radius: 2px;
+}
+#notice .sw-next {
+  border: 1.5px solid var(--live);
+  border-radius: 50%;
+}
 
 /* ---- error overlay ---- */
 
