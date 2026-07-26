@@ -294,35 +294,14 @@ function trackHeaderHeight(onChange) {
   };
 })();
 
-/* Consent banner (spec §6) — self-injecting so every page that loads this
-   shared script shows it, deep-linked env pages included. Gated to non-loopback
-   hosts: it appears on the public deploy (and LAN), never in local/grader play,
-   so it can never leak into the ship deliverable. Dismissal persists per browser. */
-(function () {
-  var h = location.hostname;
-  if (h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "") return;
-  try {
-    if (localStorage.getItem("bitrate-consent-v1")) return;
-  } catch (e) { /* private mode: show it, just don't persist the dismissal */ }
-  function mount() {
-    if (document.getElementById("consent-banner")) return;
-    var bar = document.createElement("div");
-    bar.id = "consent-banner";
-    bar.innerHTML =
-      '<span>This is a research game. We log your selection timings and accuracy ' +
-      "to study human input bit-rate — keystroke dynamics are <b>quasi-biometric</b>. " +
-      "No account or personal information is collected; webcam and microphone modes run " +
-      "entirely on your device and never upload audio or video.</span>" +
-      '<button type="button" id="consent-ok">Got it</button>';
-    document.body.appendChild(bar);
-    document.getElementById("consent-ok").addEventListener("click", function () {
-      try { localStorage.setItem("bitrate-consent-v1", "1"); } catch (e) {}
-      bar.remove();
-    });
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", mount);
-  } else {
-    mount();
-  }
-})();
+/* The consent notice used to live here, as a dismissable banner injected into
+   every page on non-loopback hosts. That was built on the assumption that
+   graders played locally and would never see it — an assumption the submission
+   decision of 2026-07-26 retired: the deployed site *is* the deliverable, so the
+   banner had become an interstitial on the exact first-session flow being
+   scored, and it described webcam and microphone modes the shipped game doesn't
+   use.
+
+   It now lives in the gallery footer (environments/index.html), below the links:
+   still one click from anywhere via "← gallery", no longer standing between a
+   player and the game. Nothing self-injects. */

@@ -56,12 +56,33 @@ type Metrics struct {
 	IkiHist []int     `json:"iki_hist"`  // IkiHistBuckets counts, 100 ms each
 }
 
+// MaxPaceBins caps the pace chart. Defence in depth: ParseConfig already bounds
+// duration_s and handleRunSubmit clamps practice elapsed, but tSec arrives here
+// as a plain float64 and this function must not be a process-killer for any
+// value of it. At BinSeconds=5 the cap is well past MaxDurationS, so no
+// legitimate run is ever truncated.
+const MaxPaceBins = 4096
+
 // ComputeMetrics walks the same replay state machine as scoring and
 // aggregates diagnostics. keys must already be boundary-filtered; tSec is
 // the same elapsed time the score used.
+//
+// Never trust tSec to be sane, even though its callers now bound it: the
+// allocation below happens before any guard, so a garbage value here would be an
+// unrecoverable out-of-memory throw rather than a bad chart.
 func ComputeMetrics(syms []string, keys []Selection, tSec float64) *Metrics {
+	nbins := 1
+	if tSec > 0 && !math.IsNaN(tSec) {
+		// Compare in float before converting: int(huge float64) is undefined and
+		// wraps negative on amd64/arm64, which would slip past a post-cast clamp.
+		if want := math.Ceil(tSec / BinSeconds); want >= MaxPaceBins {
+			nbins = MaxPaceBins
+		} else if want > 1 {
+			nbins = int(want)
+		}
+	}
 	m := &Metrics{
-		Bins:    make([]PaceBin, max(1, int(math.Ceil(tSec/BinSeconds)))),
+		Bins:    make([]PaceBin, nbins),
 		IkiHist: make([]int, IkiHistBuckets),
 	}
 	if len(keys) == 0 || tSec <= 0 {

@@ -195,9 +195,18 @@ mode contradicts the baseline by design, and that contradiction *is* the
 experiment. The rule-1/2/3/4 constraints bind everything without exception.
 
 **Contenders** (gallery front page, and the only games the leaderboard ranks):
-`drum-pad` (touch, finger cells), `pixel-lens` (mouse + fisheye loupe),
-`stream-typing` (the baseline and current ship candidate), `voice-babble`
-(hand-rolled DSP recognizer, per-player templates, solfège default).
+`drum-pad` (touch, finger cells — **the winner and what ships**, see spec §9
+step 10), `pixel-lens` (mouse + fisheye loupe), `stream-typing` (the baseline),
+`voice-babble` (hand-rolled DSP recognizer, per-player templates, solfège
+default).
+
+**drum-pad and pixel-lens are one implementation.** `drum-pad/index.html` loads
+`pixel-lens/game.js` with `window.BITRATE_INPUT='touch'`; the input mode selects
+the game. They were a single environment until 2026-07-25, so a `pixel-lens`
+variant with `input:"touch"` **is** a drum-pad variant — 41 human results. The
+board reclassifies them at query time via `effectiveEnv` (spec §4.4). **The
+stored `environment` field is provenance, not truth**; every analysis path must
+go through `effectiveEnv`.
 
 **Graveyard** (built, played, beaten or ruled out — still reachable, still in
 the history and progress strips, out of the leaderboard): `lane-tap`,
@@ -292,8 +301,81 @@ offline tests (3), cross-compiled ship build + gate in CI (4), settings sheet
 with content-addressed variants (5), runs/leaderboard/gallery (6), public deploy
 (8, partial), the merge CLI, and eight environments from the §5 backlog (9).
 
-Not built: the analysis notebook (7); the §6.1 pilot machinery — invite tokens,
-`/join`, `/pilot` guided sessions, `lab/pull.sh` (deliberately deferred in
-favour of the open sandbox); v2 per-player calibration; and step 10 — freezing
-the winning variant, stripping the lab gear (**the settings gear is lab
-machinery and currently ships visible**), and writing the final README.
+Step 10 is **partly done** (2026-07-26): `drum-pad` is frozen as the winner
+(`shipGame` in `server/api.go`, one constant driving the `/` redirect in both
+profiles); the README is written (`ship/README.md`) and rendered at `/readme` by
+both profiles from that one embedded source, linked from the results card and
+printed by `run.sh`; tile-size recommendations are badged in the first-open
+picker (`{phone: 12mm, tablet: 20mm}`, off the screen's short edge).
+
+Two reversals worth knowing, both owner decisions on 2026-07-26 and both
+recorded with rationale in the spec:
+
+- **The settings gear ships, visible** (spec §8). Tile size *is* N, and the right
+  N is a property of the player's hand and screen — shipping the gear with the
+  defaults that won beats shipping one guess. Does not re-admit the leaderboard,
+  gallery, telemetry, or device identity.
+- **The submission is the deployed web app + a link to the public repo. We do
+  NOT submit a ZIP** (spec §1 register item 7, §8). A ZIP cannot deliver a
+  touchscreen, and unzip → start a server → find the LAN address → pair a tablet
+  is more exotic setup than rule 5 allows. Rule 5 is satisfied *literally*
+  instead: `run.sh` exists and is **included in the public repo**. **So `run.sh`
+  and the `ship` profile must keep working and stay CI-gated even though nobody
+  is asked to run them** — they are rule 5's artifact and the fallback if the
+  site is down during grading. Accepted risk: site unreachable during grading =
+  no score.
+- **The gallery SHIPS, and that's a feature** (reversal of "none of them ship").
+  The brief says "surprise us", and the eight environments plus a graveyard that
+  says why each loser lost is the most interesting half of the submission.
+  `word-typing` stays *visibly* quarantined — its gallery tile says "banned by
+  the brief, so it never counted" and its page carries an off-brief banner;
+  showing that is a stronger claim than hiding it. **What ships is the `lab`
+  profile, deployed** — not a stripped build. §6 hardening still applies.
+- **Routing settles discovery:** `/` → drum pad (land on the graded game, not a
+  chooser); gallery at `/env/`, reachable from the game's "← gallery" link; the
+  gallery footer links back to drum pad, `/readme`, and the source repo. No flag
+  or special mode needed.
+
+**Built 2026-07-26 — the arm affordance.** Practice is unlimited and its HUD
+shows a trailing-60 s bps, so practice *looked like the game*; a grader could
+burn their familiarization in it and never score. Now two **colour-only** tiers
+(the header band must never change height mid-run — a reflow moves `#field`,
+changing the grid, changing N): accent outline + slow pulse always, and after 60 s
+of *accumulated practice* a one-shot card plus a filled button. The card's
+backdrop is pointer-opaque immediately while its buttons enable after 400 ms, so
+a finger already travelling toward a tile can neither dismiss it unseen nor fall
+through to the grid. Honours `prefers-reduced-motion`. Drive it without waiting a
+minute: `pixelDebug.showArmPrompt()`.
+
+**Built 2026-07-26 — recommended settings, surfaced three ways.**
+`RECOMMENDED_CELL` + `DEFAULT_PREVIEW` in `pixel-lens/game.js` are the single
+source: badged in the first-open picker, dotted in the settings sheet (`.rec` — a
+different mark from `.on`, because "what am I on" and "what should I be on" are
+different questions), and restorable via "back to recommended". Values come from
+the actual best scored runs, not taste.
+
+**Built 2026-07-26 — liveness hardening** (spec §8, tests in
+`server/liveness_test.go`). The site is now the deliverable, so a failed request
+is fine and a dead process is not. Fixed one critical (unbounded pace-bin
+allocation from client `duration_s`/`elapsed_ms` — a fatal OOM *throw*, which
+`net/http`'s recover cannot catch, reachable in two unauthenticated requests and
+live in the ship build) and three high (unevicted `pending` map; a corrupt ledger
+line making startup permanently fatal into a 10 s restart loop; no HTTP
+timeouts). Plus two correctness bugs: the persisted keystroke log was silently
+corrupted on any run with a past-boundary tap (`keys[:0]` aliasing the slice that
+gets written), and a failed submit destroyed its own retry. See the spec for what
+was deliberately left unfixed and why.
+
+Not built: the analysis notebook (7) — **and it must use `effectiveEnv`**; the
+§6.1 pilot machinery — invite tokens, `/join`, `/pilot` guided sessions,
+`lab/pull.sh` (deliberately deferred in favour of the open sandbox; pulls are
+currently a manual `curl` against token-gated `/api/export`); v2 per-player
+calibration; the README's development-trajectory section (spec §9 step 10 TODO);
+and the arm-affordance work above.
+
+**No longer a TODO:** stripping the gallery and stripping `word-typing` from the
+bundle. Both were priorities only while the deliverable was a stripped ZIP; with
+the gallery shipping deliberately and word-typing labelled off-brief in two
+places, they're resolved by the decision rather than by code. `.off-brief` in
+`gallery.css` is now dead CSS (the real banner lives in
+`word-typing/index.html`).

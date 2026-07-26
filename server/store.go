@@ -18,7 +18,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -152,6 +152,7 @@ func loadJSONL[T any](path string, add func(*T)) error {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
+	skipped := 0
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(line) == 0 {
@@ -159,9 +160,21 @@ func loadJSONL[T any](path string, add func(*T)) error {
 		}
 		v := new(T)
 		if err := json.Unmarshal(line, v); err != nil {
-			return fmt.Errorf("%s: corrupt line: %w", path, err)
+			// Skip and count rather than refuse to boot. Appends are a single
+			// write of line+"\n" and are not atomic, so a kill, an OOM, or a full
+			// disk mid-write leaves one truncated line — and returning an error
+			// here used to make that permanently fatal at startup (main.go
+			// log.Fatalf), which systemd's Restart=always turns into a 10 s crash
+			// loop. That is the worst possible failure mode: the ledger's own
+			// crash-damage becomes the reason it can never load again. One
+			// unreadable line costs one run; refusing to start costs everything.
+			skipped++
+			continue
 		}
 		add(v)
+	}
+	if skipped > 0 {
+		log.Printf("WARNING: %s: skipped %d unreadable line(s) — recoverable, but the ledger took damage (likely a crash or full disk mid-append)", path, skipped)
 	}
 	return sc.Err()
 }

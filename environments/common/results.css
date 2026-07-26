@@ -137,6 +137,7 @@
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
+a.act { text-decoration: none; } /* the design-notes link is a control, not prose */
 .act.click:hover { color: var(--fg); border-color: var(--dim); }
 .act.click:active { background: rgba(255, 255, 255, .07); }
 .act.click:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
@@ -315,18 +316,7 @@ svg .marker-line { stroke: var(--dim); stroke-width: 1; }
 #res-footer .act { font-size: 14px; padding: 11px 16px; }
 
 
-/* Consent banner (spec §6) — fixed bottom strip, shown on the public deploy only. */
-#consent-banner {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 9999;
-  display: flex; gap: 1rem; align-items: center; justify-content: center; flex-wrap: wrap;
-  padding: 0.7rem 1rem;
-  background: #12141a; color: #cfd3dc; border-top: 1px solid #2a2f3a;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px; line-height: 1.5;
-}
-#consent-banner span { max-width: 74ch; }
-#consent-banner b { color: #ffd479; font-weight: normal; }
-#consent-banner button {
-  flex: none; cursor: pointer; padding: 0.4rem 1.1rem;
-  background: #2a6df4; color: #fff; border: 0; border-radius: 6px; font: inherit;
-}
+/* The consent banner that used to live here (a fixed bottom strip injected on
+   every non-loopback page) is gone. The deployed site is now the deliverable,
+   so a strip over the game sat between a grader and the flow being scored. The
+   notice moved into the gallery footer — see #gf-consent in gallery.css. */

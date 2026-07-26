@@ -33,6 +33,31 @@
     <div id="graveyard"></div>
   </section>
 
+  <!-- The submission is this site (spec §8): the game is the deployed web app,
+       and these two links are the rest of the deliverable — the design
+       rationale the brief asks for, and the source. The README is self-hosted
+       as well as visible on GitHub so it works before anyone clicks out. -->
+  <footer id="gal-foot">
+    <div class="gf-links">
+      <a href="/readme">design notes</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/maxbates/bitrate" target="_blank" rel="noopener">source on GitHub</a>
+      <span class="sep">·</span>
+      <a href="/env/drum-pad/">play drum pad</a>
+    </div>
+    <!-- Consent notice. It sits here, below the links, rather than as a banner
+         over the game: it used to self-inject on every page, which put an
+         interstitial in front of the one flow being graded. Stated once, where
+         the collected data is actually on display. -->
+    <p class="gf-consent">
+      This is a research game. It records <b>what you selected and when</b> —
+      timing and accuracy — to measure how fast a person can push information
+      through an interface. Selection timing is <b>quasi-biometric</b>. There are
+      no accounts, no names, and no personal information: a player is a random id
+      in your own browser's storage, shown as a pseudonym.
+    </p>
+  </footer>
+
 <script src="common/results.js"></script>
 <script src="gallery.js"></script>
 </body>

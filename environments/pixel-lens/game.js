@@ -38,11 +38,38 @@ const DEFAULT_CELL_MM = 5;
 const INPUT_MODES = { mouse: 'pixel-lens', touch: 'drum-pad' };
 const CELL_OPTS = { mouse: [3, 5, 7.5, 10], touch: [12, 16, 20, 25] };
 // Per-mode starting points, not limits — both knobs are in the settings sheet.
-// Touch starts at 16 mm (a fingertip pad is ~15 mm, so it's the smallest cell
-// that still hits first try) with one look-ahead dot, because a tap has no
-// hover to plan under: seeing the next target is what keeps the thumb moving.
-const DEFAULT_CELL = { mouse: 5, touch: 16 };
+// One look-ahead dot on touch, because a tap has no hover to plan under:
+// seeing the next target is what keeps the thumb moving.
 const DEFAULT_PREVIEW = { mouse: 0, touch: 1 };
+
+// Recommended tile size, taken from the leaderboard rather than from ergonomic
+// first principles. The counterintuitive part is that the tablet wants *bigger*
+// tiles than the phone — scored 60 s runs, best per size:
+//
+//   tablet   20 mm -> 16.26, 15.09 bps    12 mm -> 14.98, 14.46
+//   phone    12 mm -> 15.41, 14.16        20 mm -> 11.36
+//
+// Fitts explains it. On a tablet you play with two index fingers and a freely
+// moving arm, so travel time dominates and fewer, larger tiles win. On a phone
+// one thumb barely travels, so travel is nearly free and the extra bits per tap
+// from a denser grid are profit. 16 mm — the previous default, picked from
+// fingertip width — is the worst tested size on a tablet and was never tested
+// on a phone at all.
+const RECOMMENDED_CELL = { mouse: 5, touch: { phone: 12, tablet: 20 } };
+
+// Phone or tablet off the short edge of the screen rather than the user agent:
+// what sets the best tile size is how far the hand has to reach, which a UA
+// string doesn't report (and iPads lie about it anyway). The two device classes
+// in the data sit at 414 and 1032 CSS px short-edge, so this threshold is
+// nowhere near a real boundary.
+function deviceClass() {
+  return Math.min(screen.width, screen.height) < 600 ? 'phone' : 'tablet';
+}
+
+function recommendedCell(mode) {
+  const r = RECOMMENDED_CELL[mode];
+  return typeof r === 'number' ? r : r[deviceClass()];
+}
 const CELL_MIN = 2, CELL_MAX = 30;
 const MAX_PREVIEW = 4;
 
@@ -106,7 +133,7 @@ function loadSettings() {
   previewDepth = typeof s.preview === 'number' && s.preview >= 0 && s.preview <= MAX_PREVIEW
     ? Math.round(s.preview) : DEFAULT_PREVIEW[inputMode];
   // Snap the cell size to a valid option for the mode (options differ by mode).
-  if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
+  if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = recommendedCell(inputMode);
 }
 
 function saveSettings() {
@@ -314,12 +341,82 @@ function configLabel() {
     (previewDepth ? ' · look ' + previewDepth : '');
 }
 
+// ---- the arm affordance ----
+// Practice is unlimited and its HUD shows a trailing-60 s bit rate, so practice
+// *looks* like the game. The failure mode this guards against is a first-session
+// player who never arms and therefore never produces a score at all — worse, who
+// believes the practice number was their score. So the arm control is the
+// primary action, not one of two equal siblings, and it escalates:
+//
+//   tier 1, always in practice — accent outline plus a slow pulse.
+//   tier 2, after ARM_PROMPT_MS of practice — filled, plus one suggestion card.
+//
+// Both tiers are colour-only. The header band must never change height mid-run
+// (spec §4.3.1): a reflow there moves #field, which changes the grid, which
+// changes N. Nothing here animates padding, font-size, or border-width.
+const ARM_PROMPT_MS = 60000;
+let practiceMs = 0;         // accumulated *practice* time, not wall clock
+let armPromptShown = false; // once per session — a nag is worse than a hint
+
 // The practice corner: the two run controls. What the game is set to, and
 // the button that changes it, live in the header's middle zone.
 function renderPracticeHelp() {
   modeHelp.innerHTML =
-    '<button type="button" class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</button>' +
+    '<button type="button" class="act click arm-cta' + (armPromptShown ? ' arm-urgent' : '') +
+    '" data-act="arm"><kbd>Enter</kbd>arm scored run</button>' +
     '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</button>';
+}
+
+// Counts seconds of practice actually played: `run.started` gates on the first
+// selection, so staring at the board — or walking away — never accrues time and
+// never earns a scolding.
+function tickArmPrompt() {
+  if (armPromptShown || state !== 'practice' || !run || !run.started) return;
+  practiceMs += 1000;
+  if (practiceMs >= ARM_PROMPT_MS) showArmPrompt();
+}
+
+function closeArmPrompt() {
+  const el = $('arm-prompt');
+  if (el) el.remove();
+}
+
+// A suggestion, shown once. The primary button arms — an explicit click is
+// explicit consent, and arming still doesn't start the clock (the first tap
+// does), so there is no way for this card to accidentally burn a scored run.
+function showArmPrompt() {
+  if (armPromptShown || $('arm-prompt')) return;
+  armPromptShown = true;
+  renderPracticeHelp(); // escalate the header button to tier 2
+
+  const wrap = document.createElement('div');
+  wrap.id = 'arm-prompt';
+  wrap.innerHTML =
+    '<div class="ap-card">' +
+    '<div class="ap-title">practice doesn\'t score</div>' +
+    '<div class="ap-body">You\'ve had a minute on the board. Nothing so far counts — ' +
+    'the bit rate up top is just your recent practice pace. ' +
+    'A <b>scored run</b> is a single 60-second attempt, and it starts on your first ' +
+    (inputMode === 'touch' ? 'tap' : 'click') + ' after you arm it.</div>' +
+    '<div class="ap-acts">' +
+    '<button type="button" class="ap-go" disabled>arm the 60 s run</button>' +
+    '<button type="button" class="ap-stay" disabled>keep practicing</button>' +
+    '</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+
+  // A finger already travelling toward a tile must not dismiss a card it never
+  // saw — and must not fall through to the grid either. The backdrop swallows
+  // the tap (it is opaque to pointers from the start) while the buttons stay
+  // disabled just long enough for that in-flight tap to land harmlessly.
+  setTimeout(() => {
+    for (const b of wrap.querySelectorAll('button')) b.disabled = false;
+  }, 400);
+
+  wrap.addEventListener('click', (e) => {
+    if (e.target.closest('.ap-go')) { closeArmPrompt(); armScoredRun().catch(showError); }
+    else if (e.target.closest('.ap-stay')) { closeArmPrompt(); }
+  });
 }
 
 function setState(next) {
@@ -332,6 +429,9 @@ function setState(next) {
   if (next !== 'practice') $('hud-spark').innerHTML = '';
   if (next === 'done') { hidePreviews(); targetEl.hidden = true; }
   if (next !== 'practice' && sheetOpen) closeSheet();
+  // The suggestion card belongs to practice and nothing else: leaving practice
+  // by any route (armed, scored, results, error) takes it with you.
+  if (next !== 'practice') closeArmPrompt();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
     modeBanner.className = 'mode-practice';
@@ -485,7 +585,7 @@ fieldEl.addEventListener('pointerdown', (e) => {
   // look-ahead dot is a distinct mistake — acting on "next" as if it were
   // "now" — so it gets a much louder red reaction in either input mode.
   const early = !verdict && isPreviewCell(cell);
-  if (early) earlyFlash(x, y);
+  if (early) earlyFlash();
   else if (inputMode === 'touch') tapFlash(x, y, verdict);
   else if (!verdict) missFlash();
   if (verdict) hitDing();
@@ -540,23 +640,23 @@ function isPreviewCell(cell) {
   return false;
 }
 
-// The loudest error in the game: a big red burst at the tap point plus a red
-// pulse around the field. Deliberately more than an ordinary near-miss, so
-// "you tapped the green one" is unmistakable at a glance.
+// The loudest error in the game: a red pulse around the whole field, so "you
+// tapped the green one" is unmistakable at a glance. No ring at the tap point —
+// the border alone carries it, and a red circle drawn over the green dot you
+// just hit reads as two separate errors (owner's call, 2026-07-26).
 //
-// The flash says "wrong"; the notice says what to do instead. It rides in the
-// footer strip below the grid — the one band that is never a cell — and is
-// pointer-events: none, so it never eats a tap or stalls the run. Repeat
-// offences just restart its timer.
-function earlyFlash(x, y) {
+// The pulse says *wrong*; the notice says *what instead*. It rides in the footer
+// strip below the grid — the one band that is never a cell — and is
+// pointer-events: none, so it can never eat a tap or stall the run. Repeat
+// offences just restart its timer. Advance-always means the tap has already
+// consumed the target by the time this shows, so the copy is a standing
+// instruction and never points at a cell that has since moved.
+let earlyFlashes = 0;
+
+function earlyFlash() {
+  earlyFlashes++;
   showNotice('<i class="sw-next"></i> <b>look-ahead</b> dot — tap the ' +
     '<i class="sw-now"></i> <b>yellow square</b>', 'warn early', 3000);
-  const el = document.createElement('div');
-  el.className = 'tap-flash early';
-  el.style.left = x + 'px';
-  el.style.top = y + 'px';
-  fieldEl.appendChild(el);
-  setTimeout(() => el.remove(), 520);
   fieldEl.classList.remove('err-pulse');
   void fieldEl.offsetWidth; // restart the pulse on back-to-back early taps
   fieldEl.classList.add('err-pulse');
@@ -569,28 +669,52 @@ function earlyFlash(x, y) {
 
 let audioCtx = null;
 
-function errorBuzz() {
+// iOS hands out every AudioContext suspended and only a user gesture may start
+// it, so warm it on the first interaction of the session rather than on the
+// first *miss* — a buzz that has to build its own context arrives late or not
+// at all. Cheap and idempotent; kept off the tap path after the first call.
+function ensureAudio() {
   if (!audioOn) return;
   try {
     audioCtx = audioCtx || new AudioContext();
     if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch { /* audio is never load-bearing */ }
+}
+// Self-removing rather than {once}: a tap taken with the buzz switched off must
+// not burn the one chance to warm up.
+function warmAudioOnce() {
+  ensureAudio();
+  if (audioCtx) document.removeEventListener('pointerdown', warmAudioOnce, true);
+}
+document.addEventListener('pointerdown', warmAudioOnce, true);
+
+function errorBuzz() {
+  if (!audioOn) return;
+  ensureAudio();
+  if (!audioCtx) return;
+  try {
     const t0 = audioCtx.currentTime;
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     o.type = 'square';
-    o.frequency.value = 110;
-    g.gain.setValueAtTime(0.05, t0);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    // 220, not the 110 this started at: a tablet's speakers are physically too
+    // small to radiate a 110 Hz fundamental, so on an iPad the buzz was there
+    // in the graph and inaudible in the room. 220 with a square's harmonics
+    // sits where small speakers actually work, and stays a low buzz on a
+    // laptop rather than a beep. Level up to match (2026-07-26).
+    o.frequency.value = 220;
+    g.gain.setValueAtTime(0.12, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.1);
     o.connect(g).connect(audioCtx.destination);
     o.start(t0);
-    o.stop(t0 + 0.09);
+    o.stop(t0 + 0.1);
   } catch { /* audio is never load-bearing */ }
 }
 
 // The hit's opposite number, and deliberately the quieter of the two: a hit
 // fires several times a second at speed, so this has to be something the ear
 // can sit inside for 60 s. Sine (no harmonics to grate), high above the miss
-// buzz's 110 Hz so the two never get confused at a glance, a fifth of its
+// buzz's 220 Hz so the two never get confused at a glance, a twelfth of its
 // gain, and 55 ms so it's over before the next tap. The 4 ms attack is there
 // only to keep the envelope from clicking at this pitch.
 function hitDing() {
@@ -873,13 +997,43 @@ function segOn(id, pred) {
   for (const b of $(id).querySelectorAll('button')) b.classList.toggle('on', pred(b));
 }
 
+// Marks the *recommended* option, as distinct from the selected one. Two
+// different questions — "what am I on" and "what should I be on" — so two
+// different marks, and a player who has wandered can always see the way back.
+function segRec(id, pred) {
+  for (const b of $(id).querySelectorAll('button')) b.classList.toggle('rec', pred(b));
+}
+
+// The shipped defaults, in one place: the settings the leaderboard's best runs
+// actually used, per device class (spec §9 step 10 — tablet 20 mm / phone 12 mm,
+// one look-ahead dot, error sound on). The first-open picker badges the tile
+// size; this is the same answer, kept visible inside the sheet.
+function recommendedSettings() {
+  return {
+    cell_mm: recommendedCell(inputMode),
+    preview: DEFAULT_PREVIEW[inputMode],
+    audio: true,
+  };
+}
+
+function atRecommended() {
+  const r = recommendedSettings();
+  return cellMm === r.cell_mm && previewDepth === r.preview && audioOn === r.audio;
+}
+
 function syncSheet() {
   const loupeOn = inputMode === 'mouse';
+  const rec = recommendedSettings();
   segOn('seg-cell', (b) => Number(b.dataset.v) === cellMm);
   segOn('seg-zoom', (b) => b.dataset.v === String(zoomMode));
   segOn('seg-lens', (b) => Number(b.dataset.v) === loupeR);
   segOn('seg-preview', (b) => Number(b.dataset.v) === previewDepth);
   segOn('seg-audio', (b) => (b.dataset.v === 'on') === audioOn);
+  segRec('seg-cell', (b) => Number(b.dataset.v) === rec.cell_mm);
+  segRec('seg-preview', (b) => Number(b.dataset.v) === rec.preview);
+  segRec('seg-audio', (b) => (b.dataset.v === 'on') === rec.audio);
+  const reset = $('sh-reset');
+  if (reset) reset.hidden = atRecommended();
   $('row-zoom').hidden = !loupeOn; // lens controls are meaningless in touch mode
   $('row-lens').hidden = !loupeOn;
   $('sheet-info').textContent =
@@ -919,7 +1073,30 @@ $('seg-audio').addEventListener('click', (e) => {
   if (!b) return;
   b.blur();
   segApply(() => { audioOn = b.dataset.v === 'on'; });
+  ensureAudio(); // switching it on is itself the gesture iOS wants
 });
+
+// "Back to recommended" — injected from here rather than added to each env's
+// index.html, because one implementation backs both games and a control that
+// exists in only one of them is a bug waiting to happen. Hidden whenever the
+// player is already on the defaults, so it never nags.
+(function mountSheetReset() {
+  const sheet = $('sheet');
+  const info = $('sheet-info');
+  if (!sheet || !info) return;
+  const row = document.createElement('div');
+  row.className = 'sh-row sh-row-reset';
+  row.innerHTML =
+    '<span class="sh-reclegend">recommended</span>' +
+    '<button type="button" id="sh-reset" class="sh-reset" hidden>back to recommended</button>';
+  sheet.insertBefore(row, info);
+  row.addEventListener('click', (e) => {
+    if (!e.target.closest('#sh-reset')) return;
+    e.target.blur();
+    const r = recommendedSettings();
+    segApply(() => { cellMm = r.cell_mm; previewDepth = r.preview; audioOn = r.audio; });
+  });
+})();
 
 $('seg-zoom').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -1206,7 +1383,7 @@ function renderHud() {
   window.BitrateResults.renderSpark('hud-spark', run, BITS, nowT);
 }
 
-setInterval(renderHud, 1000);
+setInterval(() => { renderHud(); tickArmPrompt(); }, 1000);
 
 // ---- results view (shared renderer — spec §4.3) ----
 
@@ -1260,7 +1437,7 @@ async function applyCfgParam() {
     if (c.input === 'mouse' || c.input === 'touch') inputMode = c.input;
     if (typeof c.preview === 'number' && c.preview >= 0 && c.preview <= MAX_PREVIEW) previewDepth = Math.round(c.preview);
     if (typeof c.cell_mm === 'number' && c.cell_mm >= CELL_MIN && c.cell_mm <= CELL_MAX) cellMm = c.cell_mm;
-    if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
+    if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = recommendedCell(inputMode);
     renderCellSeg();
     buildConfig();
   } catch { /* ship build or unknown hash: defaults */ }
@@ -1284,9 +1461,16 @@ window.pixelDebug = {
   // Live look-ahead cells, and whether the last tap triggered the loud
   // "you hit the green dot" reaction.
   previewCells: () => (run ? run.seq.slice(run.pos + 1, run.pos + 1 + previewDepth) : []),
-  earlyFlashCount: () => fieldEl.querySelectorAll('.tap-flash.early').length,
+  earlyFlashCount: () => earlyFlashes,
   // The "tap the yellow square" line: '' when nothing is showing.
   noticeText: () => ($('notice').hidden ? '' : $('notice').textContent),
+  // The arm affordance: read the practice clock, or jump straight to the
+  // suggestion card instead of playing for a real minute to see it.
+  practiceMs: () => practiceMs,
+  armPromptShown: () => armPromptShown,
+  showArmPrompt: () => showArmPrompt(),
+  recommended: () => recommendedSettings(),
+  atRecommended: () => atRecommended(),
   // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
   // current input mode) — exercises the same handler a finger/mouse would.
   tapCell: (idx, type) => {
@@ -1338,9 +1522,12 @@ function sizeOptionsHTML() {
   // Nine samples; the CSS shows a 2x2 of them on a phone, where a 3x3 of
   // real-size tiles is most of the screen.
   const cells = new Array(9).fill('<i></i>').join('');
+  const rec = recommendedCell(inputMode);
   return CELL_OPTS[inputMode].map((mm) => {
     const m = gridMetrics(mm);
-    return '<button type="button" class="sp-opt" data-v="' + mm + '">' +
+    const isRec = mm === rec;
+    return '<button type="button" class="sp-opt' + (isRec ? ' sp-rec' : '') + '" data-v="' + mm + '">' +
+      (isRec ? '<span class="sp-badge">recommended</span>' : '') +
       '<span class="sp-grid" style="--c:' + m.cell + 'px">' + cells + '</span>' +
       '<span class="sp-size">' + mm + ' mm</span>' +
       '<span class="sp-rate">' + m.cols + '×' + m.rows + ' · <b>' + m.bits.toFixed(2) +
@@ -1354,6 +1541,19 @@ function refreshSizePicker() {
   if (host) host.innerHTML = sizeOptionsHTML();
 }
 
+// Touch only. Tile size is half the decision — the other half is which device
+// and how many fingers, and a first-session player has no way to know either.
+// Three lines, shown at the one moment they're actionable: hands, device, and
+// the standing permission to go try it rather than reason about it.
+function touchTipsHTML() {
+  if (inputMode !== 'touch') return '';
+  return '<ul class="sp-tips">' +
+    '<li><b>fingers</b> — tablet: two index fingers. phone: one, so your hand never covers the board.</li>' +
+    '<li><b>size</b> — the badged tile is what has scored best on a screen this size. tablets do better with <em>bigger</em> tiles than phones: two fingers crossing a big screen spend their time travelling, so fewer stops beats more bits.</li>' +
+    '<li><b>try it</b> — practice is free, and the badge is an average, not your hand. a few seconds at two or three sizes, then trust your hand.</li>' +
+    '</ul>';
+}
+
 function showSizePicker() {
   const wrap = document.createElement('div');
   wrap.id = 'size-pick';
@@ -1362,9 +1562,10 @@ function showSizePicker() {
     '<div class="sp-title">how big should the tiles be?</div>' +
     '<div class="sp-sub">' +
     (inputMode === 'touch'
-      ? 'pick what your finger can hit first try. smaller tiles mean more of them — more bits per tap — right up until you start missing.'
+      ? 'more tiles means more bits per tap, but smaller tiles get missed — and a miss costs double. pick the smallest tile you hit almost every time.'
       : 'pick what you can click without aiming. smaller cells mean more of them — more bits per click — until the pointing costs more than the bits are worth.') +
     '</div>' +
+    touchTipsHTML() +
     '<div class="sp-opts">' + sizeOptionsHTML() + '</div>' +
     '<div class="sp-note">you can change this any time — <b>settings</b>, during practice</div>' +
     '</div>';
