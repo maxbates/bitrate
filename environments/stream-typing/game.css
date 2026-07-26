@@ -37,11 +37,13 @@ body {
 #stage {
   position: absolute;
   /* The header band is in-flow; JS publishes its measured height, so the
-     play area always starts exactly below it (spec §4.3.1). */
+     play area always starts exactly below it (spec §4.3.1). --kbd-inset is
+     the strip an open soft keyboard covers (0 everywhere else): the field
+     ends above it, so the stream is never under the keyboard. */
   top: var(--topbar-h, 96px);
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--kbd-inset, 0px);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -121,6 +123,36 @@ body {
 }
 #notice.warn { color: var(--err); }
 #notice b { color: inherit; font-weight: bold; }
+
+/* ---- phantom input: what a soft keyboard opens over (spec §4.3.1) ----
+   Invisible and stretched across the play field, so on a phone the tap that
+   raises the keyboard is a tap on the stream. It never takes focus — or even
+   a pointer event — on a device without a touchscreen, where keydown remains
+   the selection path. */
+#kbd-catcher {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-family: var(--mono);
+  font-size: 16px;              /* under 16px iOS zooms the page on focus */
+  user-select: text;
+  -webkit-user-select: text;    /* body sets none; a field must stay editable */
+  pointer-events: none;
+  z-index: 2;
+}
+#kbd-catcher:focus { outline: none; }
+#kbd-catcher::selection { background: transparent; }
+body.touch #kbd-catcher { pointer-events: auto; }
+
+/* Keyboard up: the field is short, so the peripheral lines go and the stream
+   keeps the middle of what is left. (#gallery-link is fixed to the layout
+   viewport, which the keyboard doesn't shrink — it would sit behind it.) */
+body.kbd-open #hint,
+body.kbd-open #gallery-link { display: none; }
 
 /* The header band (mode chip, config + settings, the HUD figures) and the
    run-control buttons are shared across every environment — see
@@ -255,3 +287,24 @@ body.armed #caret { border-color: var(--accent); }
 #card .note { color: var(--dim); margin-top: 1.4rem; font-size: 13px; }
 #card .warn { color: var(--err); margin-top: 1rem; font-size: 14px; }
 #card .title { color: var(--dim); font-size: 14px; letter-spacing: .15em; text-transform: uppercase; margin-bottom: 1rem; }
+
+/* ---- narrow viewports (a phone in portrait) ----
+   Half the screen goes to the soft keyboard, so the stream has to fit the
+   other half: smaller glyphs, a shallower viewport, and the fixation point
+   moved left so the look-ahead still has room to the right of it (at 34 px
+   mono a 390 px screen holds ~13 characters past the caret — more than the
+   default lookahead of 8 plus its chunk separators). */
+@media (max-width: 640px) {
+  #stream { font-size: 34px; left: 30%; }
+  #caret { left: 30%; height: 2.9rem; }
+  #stream-viewport { height: 5rem; }
+  #fade-left { width: 24%; }
+  #hint {
+    margin-top: 1.4rem;
+    font-size: 12px;
+    padding: 0 14px;
+    text-align: center;
+  }
+  #card { padding: 2rem 1.5rem; }
+  #card .big { font-size: 44px; }
+}

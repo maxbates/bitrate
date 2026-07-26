@@ -10,6 +10,12 @@ interval and error rate, then asserts:
   - the results card renders bps / N / Sc / Si
   - the final bps matches this file's independent reference implementation
 
+--soft-keys runs the same suite on an emulated phone, driving the soft-keyboard
+path instead (spec §4.3.1): tap the stream to raise a keyboard, arm from the
+header button, and let the selections arrive as the phantom field's `input`
+events rather than as keydowns. Same assertions — a selection that arrives by
+that path has to score exactly once, and the server has to agree.
+
 It answers "is it correct," never "is it better." Any run it generates is
 synthetic telemetry; nothing here may be used to rank variants (spec §7).
 
@@ -65,14 +71,19 @@ def launch_server() -> tuple[subprocess.Popen, str]:
 
 
 def run(url: str, cps: float, error_rate: float, duration_s: int, seed: int,
-        check_requests: bool = False) -> None:
+        check_requests: bool = False, soft_keys: bool = False) -> None:
     rng = random.Random(seed)
     iki = 1.0 / cps
     requests: list[str] = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page()
+        # A phone: touch, so the phantom field takes focus and the selections
+        # come through as input events (spec §4.3.1).
+        ctx = browser.new_context(viewport={"width": 390, "height": 844},
+                                  has_touch=True, is_mobile=True) \
+            if soft_keys else browser.new_context()
+        page = ctx.new_page()
         if check_requests:
             page.on("request", lambda req: requests.append(req.url))
         page.goto(url)
@@ -82,9 +93,24 @@ def run(url: str, cps: float, error_rate: float, duration_s: int, seed: int,
         assert page.locator("#hud-bps").inner_text().startswith("0.0"), \
             "HUD not 0.0 before first keypress"
 
+        if soft_keys:
+            # Tapping the stream is what raises the keyboard, and arming from
+            # the header button has to hand focus straight back.
+            page.tap("#kbd-catcher")
+            assert page.evaluate(
+                "() => document.activeElement === document.getElementById('kbd-catcher')"), \
+                "tapping the stream did not focus the keyboard target"
+
         # Arm the scored run; first synthetic keypress starts the clock.
-        page.keyboard.press("Enter")
+        if soft_keys:
+            page.tap("[data-act=arm]")
+        else:
+            page.keyboard.press("Enter")
         page.wait_for_selector("#mode-banner.mode-armed", timeout=10_000)
+        if soft_keys:
+            assert page.evaluate(
+                "() => document.activeElement === document.getElementById('kbd-catcher')"), \
+                "arming dropped the soft keyboard"
 
         sc = si = 0
         typed_ok: list[bool] = []  # mirror of the advance-always state
@@ -157,8 +183,8 @@ def run(url: str, cps: float, error_rate: float, duration_s: int, seed: int,
         f"card bps {got_bps} != reference {want:.4f} (N={n} Sc={card_sc} Si={card_si})"
     assert "disagreement" not in card, f"client/server anomaly:\n{card}"
 
-    print(f"OK  cps={cps} err={error_rate}  ->  N={n} Sc={card_sc} Si={card_si} "
-          f"bps={got_bps} (dispatched {dispatched})")
+    print(f"OK  cps={cps} err={error_rate}{' soft-keys' if soft_keys else ''}  ->  "
+          f"N={n} Sc={card_sc} Si={card_si} bps={got_bps} (dispatched {dispatched})")
 
 
 def main() -> None:
@@ -169,6 +195,8 @@ def main() -> None:
     ap.add_argument("--error-rate", type=float, default=0.05)
     ap.add_argument("--duration", type=int, default=60)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--soft-keys", action="store_true",
+                    help="emulate a phone and play through the soft keyboard")
     args = ap.parse_args()
 
     proc = None
@@ -176,7 +204,8 @@ def main() -> None:
     try:
         if not url:
             proc, url = launch_server()
-        run(url, args.cps, args.error_rate, args.duration, args.seed)
+        run(url, args.cps, args.error_rate, args.duration, args.seed,
+            soft_keys=args.soft_keys)
     finally:
         if proc:
             proc.terminate()
