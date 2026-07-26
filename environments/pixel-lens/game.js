@@ -542,7 +542,14 @@ function isPreviewCell(cell) {
 // The loudest error in the game: a big red burst at the tap point plus a red
 // pulse around the field. Deliberately more than an ordinary near-miss, so
 // "you tapped the green one" is unmistakable at a glance.
+//
+// The flash says "wrong"; the notice says what to do instead. It rides in the
+// footer strip below the grid — the one band that is never a cell — and is
+// pointer-events: none, so it never eats a tap or stalls the run. Repeat
+// offences just restart its timer.
 function earlyFlash(x, y) {
+  showNotice('<i class="sw-next"></i> <b>look-ahead</b> dot — tap the ' +
+    '<i class="sw-now"></i> <b>yellow square</b>', 'warn early', 3000);
   const el = document.createElement('div');
   el.className = 'tap-flash early';
   el.style.left = x + 'px';
@@ -1252,6 +1259,8 @@ window.pixelDebug = {
   // "you hit the green dot" reaction.
   previewCells: () => (run ? run.seq.slice(run.pos + 1, run.pos + 1 + previewDepth) : []),
   earlyFlashCount: () => fieldEl.querySelectorAll('.tap-flash.early').length,
+  // The "tap the yellow square" line: '' when nothing is showing.
+  noticeText: () => ($('notice').hidden ? '' : $('notice').textContent),
   // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
   // current input mode) — exercises the same handler a finger/mouse would.
   tapCell: (idx, type) => {
@@ -1274,7 +1283,19 @@ ensurePreviewPool(MAX_PREVIEW);
 renderCellSeg();
 buildConfig();
 scheduleFlush(1500);
-applyCfgParam().then(() => startRun(false)).catch(showError);
+applyCfgParam().then(() => startRun(false)).then(showColorHint).catch(showError);
+
+// Which colour means "now" is the one thing a first-session player has to be
+// told, and the cheapest moment to tell them is before the first tap. Once per
+// page load, in practice, and only when there are look-ahead dots to confuse it
+// with — after that the miss reaction (earlyFlash) does the teaching.
+let colorHintShown = false;
+function showColorHint() {
+  if (colorHintShown || !previewDepth || document.body.classList.contains('picking')) return;
+  colorHintShown = true;
+  showNotice('<i class="sw-now"></i> <b>yellow</b> = tap now · ' +
+    '<i class="sw-next"></i> green = next', 'early', 6000);
+}
 
 // ---- first open: pick a tile size ----
 // Cell size is the one setting that changes what the game *is* — it sets N and
@@ -1332,7 +1353,7 @@ function showSizePicker() {
     wrap.remove();
     document.body.classList.remove('picking');
     buildConfig();
-    toPractice();
+    toPractice().then(showColorHint);
   });
 }
 
