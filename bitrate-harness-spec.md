@@ -50,6 +50,14 @@ Several decisions rest on our reading of the brief, not its letter. Ranked by ri
 
 6. **Vocal symbols are symbols, not word-level targets — owner sign-off 2026-07-22.** Babble sounds (aah, ooh, mmm…), solfège syllables (do–ti), and letter names are arbitrary vocal symbols in the same sense the PDF blesses letter-labeled keys; rule 1's "no word-level targets" bans language words as targets (and the word environments that used them are gone/hidden accordingly). Includes borderline items like "aye".
 
+7. **The submission is the deployed web app plus the public repo; the ZIP is not submitted — owner decision 2026-07-26 (revised same day).** Rule 5 asks for "a `run.sh` script (**or equivalent**) that launches the game with no exotic setup", and the brief's freedom clause names web apps first: "Web apps, native apps, terminal games—all fine." Opening a URL is the least exotic setup there is.
+
+   The deciding argument is not convenience, it is that **drum pad is a touch game and a ZIP cannot deliver one.** Asking a grader to unzip a bundle, start a local server, find their machine's LAN address, and then join it from a tablet on the same network is more exotic setup than the brief permits, and every step is a way to lose a panelist. A URL they open on the tablet already in their hand has none of it.
+
+   Rule 5 is still satisfied **literally**, not by analogy: `run.sh` exists, works, and is *included* — in the public repo the submission links to. So the rule's artifact is delivered even though the ZIP is not the thing we ask anyone to run. **Therefore `run.sh` and the ship profile must keep working and stay CI-gated even though we no longer submit the ZIP** (§8). They are simultaneously the letter of rule 5 and the disaster fallback if the site is down during the grading window.
+
+   No gating of any kind on the hosted path — no login, no invite, no token on the play route (see §6 for what *is* gated: only the keystroke-log export). Residual risk, accepted knowingly: **if the site is unreachable during grading we have no score.** Mitigations are the retained-EBS ledger and pinned AMI (§6), and the repo's working `run.sh` as a stated fallback.
+
 If the assignment contact can be asked, ask — a one-line email beats four hedges.
 
 ---
@@ -326,6 +334,10 @@ The leaderboard is **self-contained**: one `data/` directory of JSONL per server
 
 **The leaderboard is a query, not a table.** Best bps per (device_id, variant) over scored, completed, human-verified runs; ties broken by earlier timestamp. Because it derives entirely from `run`/`result`, merging runs merges the leaderboard for free — there is no leaderboard merge logic because there is no leaderboard state. Never materialize it.
 
+**A run's game is derived from its config, not read off the stored environment key (`effectiveEnv`, added 2026-07-26).** `drum-pad/index.html` is `pixel-lens/game.js` with `window.BITRATE_INPUT = 'touch'` — one implementation, two games, selected by input mode (`INPUT_MODES` in that file). The two were a *single* environment until the split on 2026-07-25, so every `pixel-lens` variant carrying `input: "touch"` is a drum-pad variant recorded before the name existed: 41 human results, including 10 of the scored 60 s set and the top six rows on the board. Reclassifying them is not a judgement call — the input mode *is* the game.
+
+This is derived in the query rather than migrated into the ledger, and the reason is the identity rule above: `config_hash` is the SHA-256 of the config **including the environment key**, so rewriting a stored environment re-mints every affected hash and orphans the runs pointing at the old ones. A migration would trade a one-field read for a permanent, irreversible rewrite of content-addressed data. So `effectiveEnv(v)` is called wherever the board reads an environment (history, CSV export, and — importantly — the round-number grouping, so a player's drum-pad round count includes the runs they played before the split). Consequence to remember: **the stored `environment` field is provenance, not truth.** Any new analysis path must go through `effectiveEnv`, and the notebook (§9 step 7) must too.
+
 **Every leaderboard row carries its exact config and can relaunch it.** The run→variant join gives each entry its full config JSON; the row shows a config summary, and clicking it opens `/play?cfg=<config_hash>` — the game boots with precisely that configuration. Reproduce-what-you-see for free, because variants are content-addressed.
 
 **Leaderboard rows expand into a run detail view.** The row shows headline numbers (bps, N, Sc, Si, accuracy); expanding it renders the stored `result.metrics` (§4.3) with the same tiles-and-charts renderer the post-run results view uses — one renderer, two call sites. This is how modality differences get diagnosed at a glance: a webcam mode and the keyboard baseline at similar bps can have opposite cadence/accuracy signatures, and the detail view shows it without opening the analysis notebook.
@@ -533,7 +545,23 @@ Realistic recruitment is ~10 known people playing a handful of games each, not a
 
 ## 8. Deliverable packaging
 
-The submission is the harness frozen to the winning variant, with experiment machinery stripped. **The leaderboard, gallery, telemetry, export/merge, and device identity exist to pick the winning variant — none of them ship.** The graders receive a ZIP containing the game, `run.sh`, and the README; a scored run is stored locally at most (to render the results card) and nothing more.
+> **Superseded 2026-07-26.** This section originally read: *"The submission is the harness frozen to the winning variant, with experiment machinery stripped. The leaderboard, gallery, telemetry, export/merge, and device identity exist to pick the winning variant — none of them ship. The graders receive a ZIP containing the game, `run.sh`, and the README."* That plan assumed a keyboard game on a desktop. Drum pad won, drum pad is touch, and the whole calculus changed with it. The paragraphs below are the current decision; the original is kept because the reversal is only legible next to what it reversed.
+
+**The submission is the deployed web app at <https://bitrate.einkgen.link>, plus a link to the public source repo. We do not submit a ZIP** (owner decision 2026-07-26; see §1 register item 7 for the rule-5 reasoning). A grader opens a URL on the tablet already in their hand. There is nothing to unzip, no local server to start, no LAN address to discover, and no second device to pair — each of which was a way to lose a panelist, and all of which a touch game makes unavoidable in a bundle.
+
+**`run.sh` and the ship profile stay alive and CI-gated anyway.** They are the literal satisfaction of rule 5 ("include a `run.sh` script") via the public repo, and the fallback if the site is down during grading. Letting them rot would quietly trade a satisfied rule for an unsatisfied one. `build.sh` keeps producing the ZIP; we simply do not ask anyone to run it.
+
+**The gallery ships, and that is a feature (reversal).** The original plan stripped it as lab machinery. It stays, because the brief says *"surprise us"* and the most interesting thing we have is not the winner but the **eight games we built and the reasons the losers lost** — the graveyard is the negative-results half of the submission, and it is already honest about itself: each dead environment carries why it died, and `word-typing` is labelled *"word-level targets are banned by the brief, so it never counted"* on its gallery tile plus an off-brief banner on its own page. Shipping that is a stronger claim than hiding it. What ships is therefore the **lab** profile, deployed — not a stripped build.
+
+**What still does not ship, even now:** nothing was added to the public surface to make this true — the deployed instance keeps §6's hardening (rate limit, body cap, token-gated `/api/export*`, consent banner on non-loopback). Device identity remains a random `localStorage` id shown as a pseudonym, never an account, never PII.
+
+**Routing resolves the discovery tension.** `/` goes straight to drum pad, so a grader lands on the game being scored rather than on a chooser; the gallery lives at `/env/` and is reachable from the game's "← gallery" link, and the gallery's footer links back to drum pad, to the self-hosted README at `/readme`, and to the source repo. Direct for the graded path, discoverable for the curious one, no flag or special mode required.
+
+**`/` is the game in both profiles.** One constant, `shipGame` in `server/api.go`, drives the root redirect; the gallery keeps its own address at `/env/`, which is where every environment's "← gallery" link already pointed. Freezing a different variant later is a one-line change rather than a hunt through the routing table.
+
+**The README is rendered from the shipped markdown, not duplicated.** `ship/README.md` is embedded (root `readme.go`) and served at `/readme` by **both** profiles — the brief asks for the README, so it is not lab machinery. `server/readme.go` holds a hand-rolled markdown subset (headings, paragraphs, bullet lists, fenced code, tables, rules, inline code/bold/em/links) because Tier A is stdlib-only and no dependency is worth taking for one page; anything outside the subset degrades to a paragraph rather than breaking. `/readme.md` serves the raw source. One source of truth: the grader who only unzips reads the file, the grader who only opens the URL reads the rendering, and they cannot drift. It is linked from the results card — the moment a player has a score to read it against — and `run.sh` prints its location on every launch.
+
+**Settings ship visible, and players are invited to try variants (reversal, owner decision 2026-07-26).** The earlier plan stripped the settings gear as lab machinery. It stays, because tile size is not a preference — it *is* N, and the right N is a property of the player's hand and screen that no default can know. Shipping the gear with good defaults and a nudge to experiment is strictly better than shipping one guess, and every change mints a content-addressed variant, so whatever a grader lands on is exactly reproducible. This does **not** re-admit the leaderboard, gallery, telemetry, or device identity — those stay compiled out.
 
 Two build profiles from one source tree, both produced by the build script:
 
@@ -602,3 +630,103 @@ One framing worth including in the README: a healthy person touch-typing lands a
 8. Public deploy + §6.1 pilot machinery: invite tokens, guided session runner, `lab/pull.sh` export→merge cadence.
 9. Alternate environments from the §5 backlog.
 10. Freeze winning variant, strip, package, write README.
+
+### Step 10 — the winner is `drum-pad` (decided 2026-07-26)
+
+Measured on the deployed ledger (873 runs / 275 results, pulled 2026-07-26T20:52Z), after `effectiveEnv` reclassification (§4.4), bots excluded, scored full-length runs only:
+
+| game | modality | best bps | best/device mean | best **first** scored run | devices |
+|---|---|---|---|---|---|
+| **drum pad** | touch | **16.26** | **14.21** | **15.41** | 5 |
+| stream typing | keyboard, N=27 | 10.34 | 10.34 | 10.34 | 1 |
+| pixel lens | mouse + loupe | 7.27 | 3.93 | 7.27 | 3 |
+| parabola fall | keyboard, paced | 5.20 | 2.90 | 5.20 | 2 |
+
+Drum pad wins on every cut, **including best-first-scored-run** — the only statistic that resembles a grader's single session, and the one §3 says to weight.
+
+**This overturns §2.1's thesis that the keyboard wins structurally, and the reason is worth keeping.** The keyboard's ~40 bps ceiling is a *prose* number: it depends on overlearned digram and word motor programs, and an i.i.d. letter sequence — which rule 1 mandates — has none of them. Stripped of language structure our best typing run sustained 2.6 keystrokes/s (~10 bps), about a sixth of the prose-implied rate. Direct touch has no such dependency: a tile grid pays 6.4 bits per tap *and* the stimulus is the response (perfect S-R compatibility, nothing to translate), so it survives first contact. **The lesson generalizes: any modality whose headline throughput comes from language redundancy loses most of it under this brief.**
+
+**Tile size is N, and the measured optimum contradicts the ergonomic prediction.** Best scored run per tile size:
+
+| | 12 mm | 16 mm | 20 mm |
+|---|---|---|---|
+| **tablet** (≥600 px short edge) | 14.98 | 12.93 | **16.26** |
+| **phone** (<600 px short edge) | **15.41** | — | 11.36 |
+
+The tablet wants *bigger* tiles than the phone. Fitts's law explains it: two index fingers crossing a large screen spend their time travelling, so fewer, larger stops win; a single thumb on a phone barely travels, so travel is nearly free and a denser grid's extra bits per tap are profit. Pushing the tablet to 12 mm buys 8.1 bits/tap and *loses* overall. The previous default of 16 mm — chosen from fingertip width — is the **worst tested size on a tablet** and had never been tested on a phone.
+
+So `RECOMMENDED_CELL` is `{phone: 12, tablet: 20}` (`environments/pixel-lens/game.js`), classified off the screen's short edge rather than the user agent (reach is what matters, and iPads misreport their UA). The recommendation is badged in the first-open picker and used as the default, with copy that says it is an average and not the player's hand.
+
+**Honest caveat on the evidence: it is thin.** Five devices, 16 scored drum-pad runs, n≈4 per tile-size cell, and 7 of the 16 predate the `touch_points` telemetry field so their device class is unknown. Tablet-20 mm is the strongest signal (two different devices, both ≥15). The 12-vs-20 ordering *within* a device class is not firmly established, and more first-contact runs would be the cheapest possible improvement to this decision.
+
+**Remaining step-10 work.** The ship ZIP still embeds all eleven environments, including `word-typing`, which is quarantined for violating rule 1 — a grader who types `/env/word-typing/` finds an off-brief game in our submission, and the same URL is reachable on the public site. That is the highest-priority strip. The settings gear deliberately stays (§8).
+
+### TODO — make "arm" unmissable (owner request 2026-07-26, NOT built)
+
+**The failure mode this guards against is losing a grader's entire score.** Practice is self-paced, unlimited, and — because the practice HUD shows a trailing-60 s bit rate (§4.3) — it *looks* like the game. A grader can spend their whole familiarization period in practice, watch a plausible bps number climb, and never produce a scored run at all. Worse, they may believe they already have. Everything else in step 10 is polish; this one can zero a panelist.
+
+The affordance today is thin: `renderPracticeHelp()` emits a dim `.act.click` reading `[Enter] arm scored run`, and on narrow viewports `#mode-help .act kbd` is hidden — so on the touch device drum pad is actually played on, there is no keyboard hint and the button is the *only* path to a scored run, styled identically to `[Esc] new practice seed` next to it. Note the asymmetry to fix: `.mode-armed` already fills the banner accent-yellow *once you are armed*; nothing draws the eye to the control that gets you there.
+
+Owner's proposed design:
+
+- **Yellow-fill the arm button and give it a slow pulse** so it reads as the primary action rather than one of two equal siblings.
+- **After ~60 s of accumulated practice, suggest arming** via a modal, and turn up the arm button's emphasis (fill it) from then on.
+
+Constraints that make this less trivial than it looks — none are reasons not to do it, just the things that will break if ignored:
+
+1. **The header band must never change height mid-run** (§4.3.1, and it has bitten before: a reflow there moves `#field`, which changes the grid, which changes N). So pulse `color` / `background` / `box-shadow` / `opacity` only — never `padding`, `font-size`, `border-width`, or anything else that reflows. Or reserve the space up front.
+2. **Respect `prefers-reduced-motion`** — drop to a static fill, keep the emphasis.
+3. **The modal must never appear in `armed`, `scored`, or `done` state**, only in `practice`.
+4. **A modal on a touch game must not eat an in-flight tap.** A finger already travelling toward a tile will dismiss a modal that materializes under it, so the player never sees it — and, worse, may read the dismissal as having armed. Needs either placement clear of the grid or a short ignore-input window after it appears.
+5. **Fire once per session, not a recurring nag** — and count *practice* time, not wall-clock time, so a player who walks away isn't scolded on return.
+6. **It must not become the thing that starts the run.** Arming stays an explicit act; the modal suggests, it does not arm.
+
+Worth measuring afterwards rather than assuming: whether the 60 s prompt actually changes the share of first-session players who reach a scored run. The ledger already answers it — `is_scored` per device per session.
+
+### Liveness hardening (2026-07-26) — the site is now the deliverable
+
+Shipping the deployed app instead of a ZIP changes the threat model: **a request that fails is acceptable; a process that dies is not.** The game, the HUD, and the scoring preview are all client-side, so a 500 costs one submission, while a dead process costs every grader still to play. An audit of the server against that standard found one critical hole and three high ones. All are fixed, with regression tests in `server/liveness_test.go`.
+
+- **Critical — unbounded allocation from a client number (`metrics.go`).** `ComputeMetrics` sized its pace-bin slice from `tSec` *before* any guard, and `tSec` came from either `config.duration_s` (validated only as `> 0`) or a practice run's raw `elapsed_ms` (not validated at all). `duration_s: 1e10` requests 2×10⁹ bins — a fatal out-of-memory **throw**, which unlike a panic `net/http`'s per-connection `recover` cannot contain. Two unauthenticated requests, and it was live in the ship build too. Fixed at three layers: `MaxDurationS` (3600) bounds the config, the practice path clamps its own elapsed, and `MaxPaceBins` caps the allocation regardless of caller. The float comparison happens *before* the int conversion, because `int(huge float64)` is undefined and wraps negative on amd64/arm64 — a post-cast clamp would have missed the worst values.
+- **High — `pending` map never evicted (`api.go`).** Abandoned runs are routine (closed tab, reload, wandering off), and each entry retained the client's config document plus a 2000-symbol sequence. Now swept by TTL on the start path — the thing that grows the map tidies it, so there's no background goroutine to supervise, which matters because an unrecovered goroutine is itself a process-killer — plus an oldest-first cap so a burst degrades in-flight runs rather than killing the site.
+- **High — a corrupt ledger line made startup permanently fatal (`store.go`).** Appends are a single non-atomic write, so a crash or full disk truncates one line; `loadJSONL` then returned an error and `main` called `log.Fatalf`, which `Restart=always` turned into a 10-second crash loop. **This was the compounding failure: the ledger's own crash damage became the reason it could never load again.** Now skipped and loudly logged. One unreadable line costs one run; refusing to start costs everything.
+- **High — no HTTP timeouts (`main.go`).** Bare `http.Serve` sets none, so a half-open connection pinned a goroutine and its buffers forever. Enough of them exhaust the box *without crashing* — worse than crashing, because `Restart=always` cannot fix what hasn't died. Read side is tight (that's the abuse vector); write side is deliberately slack so a multi-megabyte keystroke export over a slow link isn't cut off.
+
+Two correctness bugs surfaced by the same audit and fixed with it:
+
+- **The persisted keystroke log was silently corrupted** whenever a scored run had a tap past the 60 s boundary, which is routine. The boundary filter used `keys[:0]`, aliasing the slice that was later written to disk, so the stored log was the survivors followed by a stale tail. The log is the record everything else recomputes from, so this was quietly poisoning the ledger. It now filters into a fresh slice, and the **full** log is persisted deliberately — post-boundary taps are worth keeping and the filter is reproducible from `duration_s`.
+- **A failed submit destroyed its own retry.** The `pending` entry was deleted before validation and before anything was durable, so a transient storage error 500'd the submit *and* made the run permanently unknown. Removal now happens after the result is stored: still exactly-once, but a failure is retryable. During a graded window this is the difference between a hiccup and a lost score.
+
+Known and **not** fixed, with reasons — none can kill the process:
+
+- **One file descriptor leaks per completed run** (`store.go` caches every append target and never closes the per-run keystroke files). Bounded by `RLIMIT_NOFILE`, so it needs ~500 k runs on systemd's limit; on exhaustion submissions start failing but the process lives. Worth fixing, not urgent. The same mechanism holds N descriptors open while merging an N-run bundle.
+- **`/api/export?include=keystrokes` faults the whole corpus into memory.** Lab-only (compiled out of ship) and token-gated on the public deploy, so it is an operator foot-gun rather than an attack surface.
+- **`IsFirstContact` is O(all runs) under `RLock`** on the run-start path, and `buildHistory` holds `RLock` across its sort. Degradation only, at current ledger size (~900 runs) immeasurable.
+- **`merge` trusts bundle-supplied run ids as path components.** An offline CLI over operator-chosen input; worth a hex check when merge is next touched.
+
+Verified safe by call path rather than assumed: the only two goroutines in the tree (`store.writer`, `openBrowser`), all three mutexes (no upgrades, no I/O or channel sends under lock, `PutVariant`'s early return correctly balanced), every type assertion (all two-value form), `sequence.go`'s modulo (alphabet size ≥ 2 is enforced upstream), and `scoring.go`/`metrics.go`'s index arithmetic.
+
+### TODO — make the repo public (owner decision 2026-07-26, NOT done)
+
+The submission links to <https://github.com/maxbates/bitrate>, which is private, so **the gallery footer link 404s until this is flipped**. It is deliberately a separate, deliberate act rather than something done in passing, because going public is irreversible in the ways that matter: git history is permanent, and forks and caches outlive any later deletion.
+
+Known and accepted before flipping: **`swe-homework.pdf` is tracked and stays tracked** (owner decision, same day) — the brief is published along with the repo, and it is also served at `/assignment.pdf` on the public site. That is a conscious choice, not an oversight; it makes the harness checkable against the brief it was built from.
+
+Verified clean at the time of the decision, and worth re-checking immediately before flipping: no ledger or run data is tracked (`data/` is ignored), no export token (it lives at `~/.bitrate/export-token`), and no AWS account id, Elastic IP, or access key appears in any tracked file.
+
+### TODO — settle the final settings (owner request 2026-07-26)
+
+Defaults are **defined and shipped now**, taken from the best scored runs rather than from taste: tablet **20 mm / 1 look-ahead dot**, phone **12 mm / 1 dot**, error sound on. Those are the exact configs behind the 16.26 bps (tablet, 14×6, N=84) and 15.41 bps (phone, 7×11, N=77) runs, verified against the pulled ledger — not interpolated. `RECOMMENDED_CELL` and `DEFAULT_PREVIEW` in `environments/pixel-lens/game.js` are the single source, surfaced three ways: badged in the first-open picker, dotted in the settings sheet, and restorable there via "back to recommended".
+
+What is *not* settled is whether those are the right defaults. The evidence is n≈4 per tile-size cell across 5 devices (§9 step 10), and the 12-vs-20 mm ordering within a device class is not firmly established. Re-run this decision if more first-contact data lands; the numbers to beat are in the table above. **Leave the settings gear visible either way** (§8) — the point of shipping it is that no default knows the player's hand.
+
+### TODO — README: tell the development trajectory (owner request 2026-07-26, NOT built)
+
+The README currently defends the design as if it were arrived at directly. It wasn't, and the route is more interesting than the destination — the brief asks us to surprise it, and a reversal we can show our work on is better than a conclusion asserted. Add a short section covering:
+
+- **We started with a self-contained offline bundle and a keyboard game**, on the reasoning in §2.1: keyboard is parallel, discrete, overlearned, low-latency, and touch typing's practiced ceiling (~20–40 bps) dominates every pointing modality. The packaging followed from that — a desktop game is a thing you can hand someone as a ZIP.
+- **Both halves of that turned out to be wrong, and for the same reason.** The keyboard's ceiling is a *prose* number that depends on overlearned digram programs; rule 1's i.i.d. sequence deletes them, and our best typing run sustained 2.6 keystrokes/s. Touch pays more per selection *and* needs no learned mapping, so it survives first contact — which is the only session that gets graded.
+- **Once the winner was a touch game, the packaging had to change too.** A ZIP cannot deliver a touchscreen; asking a grader to unzip, launch a server, and pair a tablet over LAN is exactly the "exotic setup" rule 5 rules out. So the deliverable became a deployed web app, with `run.sh` retained in the public repo as rule 5's artifact and the offline fallback.
+- **The gallery is the evidence.** Eight environments, four of them in the graveyard with the reason each lost. Keep it short and factual; the point is that the winner was measured against real alternatives, not asserted.
+
+Owner's steer on tone: **don't over-defend the design decisions.** State what we tried, what the numbers said, and what changed our minds. The polish of the interface matters more than the rhetoric of the README.

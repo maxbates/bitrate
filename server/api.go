@@ -16,7 +16,15 @@ import (
 	"math"
 	"net/http"
 	"sync"
+	"time"
 )
+
+// shipGame is the environment the submission is: the variant the leaderboard
+// picked (spec §9 step 10). Drum pad won on every measure that matters —
+// including best-first-scored-run, the only one that resembles a grader's
+// single session. One constant so freezing the deliverable is a one-line
+// change, not a hunt through the routing table.
+const shipGame = "drum-pad"
 
 type server struct {
 	store *Store
@@ -28,9 +36,46 @@ type server struct {
 }
 
 type pendingRun struct {
-	run     *Run
-	cfg     *Config
-	symbols []string // canonical per-selection symbols (chars or cell indices)
+	run       *Run
+	cfg       *Config
+	symbols   []string  // canonical per-selection symbols (chars or cell indices)
+	startedAt time.Time // for sweeping abandoned runs (see sweepPendingLocked)
+}
+
+// A started-but-never-submitted run is the normal case, not the exception: a
+// closed tab, a reload, or wandering off mid-familiarization all leave one
+// behind. Each entry retains the client's config document and a full symbol
+// sequence, so without eviction the map is an unbounded leak driven by
+// unauthenticated requests — and Go treats out-of-memory as a fatal throw, so
+// the leak ends in a dead process rather than a failed request.
+const (
+	pendingTTL = 2 * time.Hour // >> any real bout; MaxDurationS is 1 h
+	maxPending = 512
+)
+
+// sweepPendingLocked drops expired entries. Called on the start path — the
+// thing that grows the map is the thing that tidies it, so there is no
+// background goroutine to supervise (and an unrecovered one would be a
+// process-killer in its own right). Caller must hold s.mu.
+func (s *server) sweepPendingLocked() {
+	cutoff := time.Now().Add(-pendingTTL)
+	for id, p := range s.pending {
+		if p.startedAt.Before(cutoff) {
+			delete(s.pending, id)
+		}
+	}
+	// Backstop for a burst faster than the TTL: evict the oldest rather than
+	// refuse service, so a flood degrades other players' in-flight runs instead
+	// of taking the site down for everyone.
+	for len(s.pending) >= maxPending {
+		oldestID, oldest := "", time.Time{}
+		for id, p := range s.pending {
+			if oldestID == "" || p.startedAt.Before(oldest) {
+				oldestID, oldest = id, p.startedAt
+			}
+		}
+		delete(s.pending, oldestID)
+	}
 }
 
 func newServer(store *Store, env fs.FS) *server {
@@ -39,13 +84,11 @@ func newServer(store *Store, env fs.FS) *server {
 
 func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
-	// Lab: / is the environment chooser (grows into the step-6 gallery).
-	// Ship: / is the frozen game, straight away.
-	if buildProfile == "lab" {
-		mux.Handle("GET /{$}", http.RedirectHandler("/env/", http.StatusFound))
-	} else {
-		mux.Handle("GET /{$}", http.RedirectHandler("/env/stream-typing/", http.StatusFound))
-	}
+	// / is the game, in both profiles. The submission is a URL the graders
+	// open (spec §8), so the root has to land on the thing being scored rather
+	// than on a chooser; the gallery keeps its own address at /env/, which is
+	// where every environment's "← gallery" link already points.
+	mux.Handle("GET /{$}", http.RedirectHandler("/env/"+shipGame+"/", http.StatusFound))
 	static := http.StripPrefix("/env/", http.FileServerFS(s.env))
 	mux.HandleFunc("GET /env/", func(w http.ResponseWriter, r *http.Request) {
 		if s.dev {
@@ -53,6 +96,10 @@ func (s *server) routes() *http.ServeMux {
 		}
 		static.ServeHTTP(w, r)
 	})
+	// The README ships (the brief asks for it), so it is registered in both
+	// profiles rather than alongside the lab routes.
+	mux.HandleFunc("GET /readme", s.handleReadme)
+	mux.HandleFunc("GET /readme.md", handleReadmeRaw)
 	mux.HandleFunc("POST /api/run/start", s.handleRunStart)
 	mux.HandleFunc("POST /api/run/submit", s.handleRunSubmit)
 	s.registerLabRoutes(mux) // empty in ship builds (spec §8)
@@ -146,7 +193,8 @@ func (s *server) handleRunStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.pending[runID] = &pendingRun{run: run, cfg: cfg, symbols: symbols}
+	s.sweepPendingLocked()
+	s.pending[runID] = &pendingRun{run: run, cfg: cfg, symbols: symbols, startedAt: time.Now()}
 	s.mu.Unlock()
 
 	writeJSON(w, resp)
@@ -182,9 +230,17 @@ func (s *server) handleRunSubmit(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusBadRequest, "bad json: "+err.Error())
 		return
 	}
+	// Look up but do NOT remove: the entry is the only thing that makes a retry
+	// possible, and it used to be deleted here, before validation and before
+	// anything was durable. A transient storage error (full disk, fd exhaustion)
+	// therefore 500'd the submit *and* destroyed the only record that could
+	// accept it again — the run became permanently "unknown or already-submitted".
+	// During a graded 60-second window that is a lost score, which is the one
+	// outcome worth engineering against. Removal now happens after the result is
+	// stored, so a failed submit is retryable and a successful one is still
+	// exactly-once.
 	s.mu.Lock()
 	p := s.pending[req.RunID]
-	delete(s.pending, req.RunID)
 	s.mu.Unlock()
 	if p == nil {
 		httpErr(w, http.StatusNotFound, "unknown or already-submitted run")
@@ -201,7 +257,13 @@ func (s *server) handleRunSubmit(w http.ResponseWriter, r *http.Request) {
 	keys := req.Keystrokes
 	if p.run.IsScored {
 		cut := p.cfg.DurationS * 1000
-		kept := keys[:0]
+		// A fresh slice, NOT keys[:0]. Filtering in place would share the backing
+		// array with req.Keystrokes, and req.Keystrokes is what gets persisted
+		// below — so the stored log would come out as the survivors followed by a
+		// stale tail. Any run with one tap past the 60 s boundary (routine) wrote
+		// a corrupt log, silently, and that log is the record everything else
+		// recomputes from.
+		kept := make([]Selection, 0, len(keys))
 		for _, k := range keys {
 			if k.TPressedMs < cut {
 				kept = append(kept, k)
@@ -220,6 +282,13 @@ func (s *server) handleRunSubmit(w http.ResponseWriter, r *http.Request) {
 		t = req.ElapsedMs / 1000
 		if n := len(keys); n > 0 && t < keys[n-1].TPressedMs/1000 {
 			t = keys[n-1].TPressedMs / 1000
+		}
+		// elapsed_ms and t_pressed_ms are raw client numbers that never passed
+		// through ParseConfig, so this is the practice path's own bound. Clamped
+		// rather than rejected: a bogus practice elapsed is a client bug, and
+		// refusing the submit would throw away a real selection log over it.
+		if t > MaxDurationS || math.IsNaN(t) {
+			t = MaxDurationS
 		}
 	}
 
@@ -274,6 +343,11 @@ func (s *server) handleRunSubmit(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Durable — now retire the pending entry, so this run cannot be submitted
+	// twice but a run that failed above can still be retried.
+	s.mu.Lock()
+	delete(s.pending, req.RunID)
+	s.mu.Unlock()
 	writeJSON(w, submitResp{Result: *res, Invalidated: req.Invalidated})
 }
 

@@ -14,6 +14,12 @@ import (
 	"math"
 )
 
+// MaxDurationS bounds a bout's configured length. The brief's scored run is
+// 60 s; this is generous headroom for practice bouts while keeping a
+// client-supplied duration from becoming an unbounded allocation downstream
+// (see ComputeMetrics).
+const MaxDurationS = 3600.0
+
 // Config is the parsed, validated subset of a variant config that the
 // server needs. The full document is preserved verbatim-canonicalized for
 // hashing and storage.
@@ -25,6 +31,35 @@ type Config struct {
 	DurationS    float64
 	Canonical    []byte // canonical JSON (sorted keys, no whitespace)
 	Hash         string // hex SHA-256 of Canonical
+}
+
+// effectiveEnv reports which game a variant actually is, which is not always
+// the environment key it was stored under. drum pad's page *is* pixel lens's
+// implementation with window.BITRATE_INPUT='touch' (see INPUT_MODES in
+// environments/pixel-lens/game.js), and the two were a single environment until
+// the split on 2026-07-25 — so every pixel-lens variant carrying input:"touch"
+// is a drum-pad variant recorded before the name existed. The rule is exact,
+// not a heuristic: the input mode is what selects the game.
+//
+// Derived in the query rather than migrated into the ledger, deliberately
+// (spec §4.4: the board is a query, not a table). Variant identity is the
+// SHA-256 of the config *including* the environment key, so rewriting the
+// stored environment would re-mint every affected hash and orphan the runs
+// pointing at the old ones. Deriving costs one field read and is reversible.
+func effectiveEnv(v *Variant) string {
+	if v == nil {
+		return ""
+	}
+	if v.Environment != "pixel-lens" {
+		return v.Environment
+	}
+	var c struct {
+		Input string `json:"input"`
+	}
+	if json.Unmarshal(v.Config, &c) == nil && c.Input == "touch" {
+		return "drum-pad"
+	}
+	return v.Environment
 }
 
 // M returns the number of sampled symbols (excluding the correction key).
@@ -81,8 +116,15 @@ func ParseConfig(raw map[string]any) (*Config, error) {
 	}
 	backspace, _ := raw["backspace"].(bool)
 	duration, _ := raw["duration_s"].(float64)
-	if duration <= 0 {
-		return nil, errors.New("config.duration_s must be > 0")
+	// Bounded at both ends, not just above zero. This value is client-supplied
+	// and reaches ComputeMetrics as the divisor for the pace-bin allocation, so
+	// an unbounded duration is an unbounded `make` — a single unauthenticated
+	// start+submit could request billions of bins and take the process down with
+	// a runtime OOM (which is a throw, not a panic, so net/http's per-connection
+	// recover cannot save it). MaxDurationS is far above anything a real bout
+	// uses; the brief's scored run is 60 s.
+	if duration <= 0 || duration > MaxDurationS || math.IsNaN(duration) {
+		return nil, fmt.Errorf("config.duration_s must be > 0 and <= %g", MaxDurationS)
 	}
 	// chunk_size: visual grouping only (a separator glyph, never a target —
 	// spec §2.3); null disables it.

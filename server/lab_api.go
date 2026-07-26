@@ -79,9 +79,7 @@ func (s *server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 		run := s.store.runs[id]
 		env := ""
 		if run != nil {
-			if v := s.store.variants[run.VariantID]; v != nil {
-				env = v.Environment
-			}
+			env = effectiveEnv(s.store.variants[run.VariantID])
 		}
 		rows = append(rows, row{run, res, env})
 	}
@@ -202,10 +200,7 @@ func (s *server) buildHistory() []historyEntry {
 		if run == nil || run.EndedAt == "" || run.Flags["invalidated"] {
 			continue
 		}
-		env := ""
-		if v := s.store.variants[run.VariantID]; v != nil {
-			env = v.Environment
-		}
+		env := effectiveEnv(s.store.variants[run.VariantID])
 		sel := 0
 		if res.Metrics != nil {
 			sel = res.Metrics.Selections
