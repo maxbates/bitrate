@@ -91,6 +91,9 @@ const GRAVEYARD = ['lane-tap', 'twin-stick', 'parabola-fall', 'word-typing'];
 // Deleted outright; their historical runs are filtered from every view.
 const HIDDEN_ENVS = new Set(['speech-words']);
 
+// How many ranked rows the board shows per tab.
+const BOARD_LIMIT = 10;
+
 const DEVICE_ID = localStorage.getItem('bitrate_device_id') || '';
 
 let DATA = null;
@@ -335,9 +338,14 @@ $('board-tabs').addEventListener('click', (e) => {
 });
 
 function renderBoard() {
-  const rows = DATA.rows.filter((r) => ranks(envOf(r)))
+  const all = DATA.rows.filter((r) => ranks(envOf(r)))
     .filter((r) => boardFilter === 'all' || envOf(r) === boardFilter);
-  $('board-note').textContent = ' · best verified scored run per player × config';
+  // Show only the top BOARD_LIMIT of whatever tab is active — the board is a
+  // ranking, not a ledger. The full run history lives in the progress strips
+  // and /api/leaderboard; nothing is dropped, only hidden from the table.
+  const rows = all.slice(0, BOARD_LIMIT);
+  $('board-note').textContent = ' · best verified scored run per player × config' +
+    (all.length > rows.length ? ' · top ' + BOARD_LIMIT + ' of ' + all.length : '');
   if (!rows.length) {
     $('board').innerHTML =
       '<div class="empty">no scored runs here yet — arm one from any game (Enter) and claim the top spot.</div>';
