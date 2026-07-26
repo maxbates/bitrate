@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 
 	"bitrate"
@@ -28,6 +29,16 @@ func main() {
 		noBrowser = flag.Bool("no-browser", false, "do not try to open the browser")
 	)
 	flag.Parse()
+
+	// Lab persists to one stable, home-anchored ledger regardless of where the
+	// server is launched from (so runs never scatter into per-cwd data/ dirs).
+	// Ship/gate keep the isolated relative dir — grading and tests must never
+	// touch the personal ledger.
+	if *dataDir == "data" && buildProfile == "lab" {
+		if home, err := os.UserHomeDir(); err == nil {
+			*dataDir = filepath.Join(home, ".bitrate", "data")
+		}
+	}
 
 	var env fs.FS
 	if *dev {
@@ -67,6 +78,11 @@ func main() {
 			fmt.Printf("  ▶  http://%s:%s/  (same-WiFi devices — e.g. iPad, touch mode)\n", ip, port)
 		}
 	}
+	if buildProfile == "lab" {
+		absData, _ := filepath.Abs(*dataDir)
+		nRuns, nResults, nVariants := store.Counts()
+		fmt.Printf("\n  ledger: %s\n  (%d runs · %d results · %d variants — this file only grows)\n", absData, nRuns, nResults, nVariants)
+	}
 	fmt.Printf("\n  (paste the URL into a browser if one doesn't open)\n\n")
 	// BITRATE_NO_BROWSER lets test harnesses that exec run.sh (which passes no
 	// flags) suppress the courtesy browser-open without editing the grader path.
@@ -74,7 +90,7 @@ func main() {
 		go openBrowser(url)
 	}
 
-	log.Fatal(http.Serve(ln, srv.routes()))
+	log.Fatal(http.Serve(ln, publicHardening(srv.routes())))
 }
 
 // lanIPs returns this host's private IPv4 addresses (non-loopback), best-effort,

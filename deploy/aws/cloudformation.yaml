@@ -1,0 +1,282 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  bit-rate harness — public pilot deploy (spec §6). One small EC2 instance runs
+  the lab Go binary behind Caddy (automatic Let's Encrypt TLS), reachable at a
+  Route 53 subdomain. The binary is pulled from an S3 artifact bucket on boot
+  and on every deploy (SSM), so redeploys never touch this stack. Data (JSONL
+  ledger) lives on the instance's disk at /var/lib/bitrate; the real backup is
+  the export→merge pull-to-local cadence (spec §4.4), not the instance.
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: bitrate.einkgen.link
+    Description: Public hostname. An A record for it is created in HostedZoneId.
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Default: Z10043762DQGW4CO8J6QC
+    Description: Route 53 hosted zone that owns DomainName (einkgen.link).
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: >
+      t3.micro is free-tier-eligible (x86_64) for accounts still within the
+      12-month window; otherwise ~$7.5/mo. Match AmiId's architecture if you
+      change this (t4g.* -> arm64 AMI + an arm64 binary).
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-0b8dddb344dc74379 # AL2023 x86_64, pinned 2026-07-25
+    Description: >
+      PINNED Amazon Linux 2023 AMI. Deliberately a literal, NOT the
+      /aws/service/ami-amazon-linux-latest/... SSM lookup: that resolves at
+      deploy time, so when Amazon republishes the AMI an unrelated redeploy
+      would silently REPLACE the instance. Data survives replacement (the
+      ledger is on its own retained volume) but replacement is still ~2 min of
+      downtime plus a fresh Caddy cert, so it should be a deliberate act.
+      Bump this by hand to move to a newer AMI.
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0da8a646
+    Description: A public subnet in the default VPC (us-east-1a).
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-997a8be2
+  CaddyVersion:
+    Type: String
+    Default: "2.8.4"
+    Description: Caddy release to fetch (linux_amd64 static binary).
+  ExportToken:
+    Type: String
+    NoEcho: true
+    Description: >
+      Shared secret gating /api/export* on the public instance (quasi-biometric
+      keystroke logs, §6). deploy.sh generates and passes this; pull-to-local
+      presents it. Anonymous export is refused when this is set.
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "bitrate-deploy-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: read-artifact
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject]
+                Resource: !Sub "arn:aws:s3:::bitrate-deploy-${AWS::AccountId}/*"
+              - Effect: Allow
+                Action: [s3:ListBucket]
+                Resource: !Sub "arn:aws:s3:::bitrate-deploy-${AWS::AccountId}"
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "bitrate - HTTP/HTTPS in (ACME + TLS); no SSH, SSM only"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0, Description: "ACME HTTP challenge + redirect" }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: "HTTPS" }
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!Ref SecurityGroup]
+      IamInstanceProfile: !Ref InstanceProfile
+      MetadataOptions:
+        HttpTokens: required
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: { VolumeSize: 10, VolumeType: gp3, DeleteOnTermination: true, Encrypted: true }
+      Tags:
+        - { Key: Name, Value: bitrate }
+        - { Key: app, Value: bitrate }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          # --- service users ---
+          id -u bitrate &>/dev/null || useradd --system --home-dir /var/lib/bitrate --shell /sbin/nologin bitrate
+          id -u caddy   &>/dev/null || useradd --system --home-dir /var/lib/caddy   --shell /sbin/nologin caddy
+
+          # --- data volume: mount the retained EBS volume at /var/lib/bitrate.
+          #     Format ONLY when it has no filesystem (a fresh volume). On an
+          #     instance replacement the volume already carries the ledger, so
+          #     the blkid check is what makes the data survive - never mkfs
+          #     unconditionally here. Nitro exposes /dev/sdf as /dev/nvme1n1;
+          #     the attachment may lag the boot, hence the wait loop. ---
+          DEV=""
+          for i in $(seq 1 60); do
+            for cand in /dev/sdf /dev/xvdf /dev/nvme1n1; do
+              if [ -b "$cand" ]; then DEV="$cand"; break 2; fi
+            done
+            sleep 5
+          done
+          if [ -z "$DEV" ]; then echo "data volume never appeared" >&2; exit 1; fi
+          if ! blkid "$DEV" >/dev/null 2>&1; then
+            mkfs -t xfs "$DEV"
+          fi
+          mkdir -p /var/lib/bitrate
+          UUID=$(blkid -s UUID -o value "$DEV")
+          grep -q "$UUID" /etc/fstab || echo "UUID=$UUID /var/lib/bitrate xfs defaults,nofail 0 2" >> /etc/fstab
+          mount -a
+          mountpoint -q /var/lib/bitrate || { echo "data volume failed to mount" >&2; exit 1; }
+          mkdir -p /var/lib/bitrate/keys
+          chown -R bitrate:bitrate /var/lib/bitrate
+
+          # --- Caddy (static binary, pinned) for automatic HTTPS ---
+          curl -fsSL -o /tmp/caddy.tar.gz "https://github.com/caddyserver/caddy/releases/download/v${CaddyVersion}/caddy_${CaddyVersion}_linux_amd64.tar.gz"
+          tar -xzf /tmp/caddy.tar.gz -C /tmp caddy
+          install -m 0755 /tmp/caddy /usr/local/bin/caddy
+
+          mkdir -p /etc/caddy
+          cat > /etc/caddy/Caddyfile <<CADDY
+          ${DomainName} {
+              reverse_proxy 127.0.0.1:4700
+          }
+          CADDY
+
+          cat > /etc/systemd/system/caddy.service <<'UNIT'
+          [Unit]
+          Description=Caddy
+          After=network-online.target
+          Wants=network-online.target
+          [Service]
+          User=caddy
+          Group=caddy
+          ExecStart=/usr/local/bin/caddy run --config /etc/caddy/Caddyfile
+          ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+          Restart=on-failure
+          RestartSec=5
+          AmbientCapabilities=CAP_NET_BIND_SERVICE
+          StateDirectory=caddy
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          # --- bitrate: a wrapper pulls the current binary from S3, then execs it.
+          #     Restart=always means it retries every 10s until deploy.sh uploads. ---
+          #     The binary lands in /opt (root volume, disposable); /var/lib/bitrate
+          #     stays purely the ledger.
+          mkdir -p /opt/bitrate/bin
+          chown -R bitrate:bitrate /opt/bitrate
+          cat > /usr/local/bin/bitrate-run.sh <<RUN
+          #!/bin/bash
+          set -e
+          /usr/bin/aws s3 cp "s3://${ArtifactBucket}/bitrate" /opt/bitrate/bin/bitrate
+          chmod +x /opt/bitrate/bin/bitrate
+          exec /opt/bitrate/bin/bitrate -addr 127.0.0.1:4700 -data /var/lib/bitrate
+          RUN
+          chmod 0755 /usr/local/bin/bitrate-run.sh
+
+          cat > /etc/systemd/system/bitrate.service <<UNIT
+          [Unit]
+          Description=bit-rate harness
+          After=network-online.target
+          Wants=network-online.target
+          # Refuse to start unless the ledger volume is actually mounted -
+          # otherwise the service would happily write a fresh, empty ledger to
+          # the root volume and the real data would look like it vanished.
+          RequiresMountsFor=/var/lib/bitrate
+          [Service]
+          User=bitrate
+          Group=bitrate
+          Environment=BITRATE_PUBLIC=1
+          Environment=BITRATE_NO_BROWSER=1
+          Environment=BITRATE_EXPORT_TOKEN=${ExportToken}
+          Environment=AWS_DEFAULT_REGION=${AWS::Region}
+          ExecStart=/usr/local/bin/bitrate-run.sh
+          Restart=always
+          RestartSec=10
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          systemctl daemon-reload
+          systemctl enable --now caddy
+          systemctl enable --now bitrate
+
+  # The ledger lives here, NOT on the root volume. Retained on stack delete and
+  # on instance replacement (AMI bump, UserData edit, instance-type change), so
+  # redeploys can never take the leaderboard with them. The root volume stays
+  # DeleteOnTermination — it holds only the OS and the pulled binary.
+  DataVolume:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      AvailabilityZone: !GetAtt Instance.AvailabilityZone
+      Size: 10
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - { Key: Name, Value: bitrate-data }
+        - { Key: app, Value: bitrate }
+
+  DataVolumeAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      InstanceId: !Ref Instance
+      VolumeId: !Ref DataVolume
+      Device: /dev/sdf
+
+  Eip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref Instance
+      Tags:
+        - { Key: Name, Value: bitrate }
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      TTL: "60"
+      ResourceRecords: [!Ref Eip]
+
+Outputs:
+  URL:
+    Description: Public URL (HTTPS via Caddy/Let's Encrypt once DNS + cert settle).
+    Value: !Sub "https://${DomainName}/"
+  PublicIP:
+    Value: !Ref Eip
+  InstanceId:
+    Value: !Ref Instance
+  ArtifactBucket:
+    Value: !Ref ArtifactBucket

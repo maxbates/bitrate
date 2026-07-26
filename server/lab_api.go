@@ -16,11 +16,13 @@ package main
 
 import (
 	"bufio"
+	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -28,7 +30,96 @@ func (s *server) registerLabRoutesImpl(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/leaderboard", s.handleLeaderboard)
 	mux.HandleFunc("GET /api/variants", s.handleVariants)
 	mux.HandleFunc("GET /api/runs/{id}", s.handleRunDetail)
-	mux.HandleFunc("GET /api/export", s.handleExport)
+	mux.HandleFunc("GET /api/export", s.gateExport(s.handleExport))
+	mux.HandleFunc("GET /api/export.csv", s.gateExport(s.handleExportCSV))
+}
+
+// gateExport protects the full-dataset dumps — which include the quasi-biometric
+// keystroke logs (§6) — behind a shared token WHEN one is configured via
+// BITRATE_EXPORT_TOKEN (set on the public deploy). With no token set (local lab
+// use) export stays open, so lab/pull.sh and the analysis notebooks are
+// unaffected; the deploy passes the token, so pull-to-local still works.
+func (s *server) gateExport(h http.HandlerFunc) http.HandlerFunc {
+	token := os.Getenv("BITRATE_EXPORT_TOKEN")
+	return func(w http.ResponseWriter, r *http.Request) {
+		if token != "" && r.URL.Query().Get("token") != token && r.Header.Get("X-Export-Token") != token {
+			httpErr(w, http.StatusForbidden, "export requires a token")
+			return
+		}
+		h(w, r)
+	}
+}
+
+// handleExportCSV: one row per completed run, env-agnostic, chronological —
+// the whole ledger as a flat table that drops straight into a notebook.
+func (s *server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
+	type row struct {
+		run *Run
+		res *Result
+		env string
+	}
+	s.store.mu.RLock()
+	rows := make([]row, 0, len(s.store.results))
+	for id, res := range s.store.results {
+		run := s.store.runs[id]
+		env := ""
+		if run != nil {
+			if v := s.store.variants[run.VariantID]; v != nil {
+				env = v.Environment
+			}
+		}
+		rows = append(rows, row{run, res, env})
+	}
+	s.store.mu.RUnlock()
+	sort.Slice(rows, func(i, j int) bool {
+		var ti, tj string
+		if rows[i].run != nil {
+			ti = rows[i].run.StartedAt
+		}
+		if rows[j].run != nil {
+			tj = rows[j].run.StartedAt
+		}
+		return ti < tj
+	})
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="bitrate-runs.csv"`)
+	cw := csv.NewWriter(w)
+	cw.Write([]string{
+		"run_id", "started_at", "ended_at", "environment", "config_hash", "device_id",
+		"scored", "first_contact", "verified", "anomaly", "invalidated",
+		"n", "sc", "si", "bits_per_selection", "bps", "t_seconds", "accuracy_pct",
+	})
+	ff := func(v float64) string { return strconv.FormatFloat(v, 'f', 4, 64) }
+	bs := func(b bool) string {
+		if b {
+			return "true"
+		}
+		return "false"
+	}
+	for _, rw := range rows {
+		res := rw.res
+		var startedAt, endedAt, hash, dev string
+		var scored, first, verified, anomaly, invalid bool
+		if rw.run != nil {
+			startedAt, endedAt = rw.run.StartedAt, rw.run.EndedAt
+			hash, dev = rw.run.VariantID, rw.run.DeviceID
+			scored, first = rw.run.IsScored, rw.run.IsFirstContact
+			verified = verifiedRun(rw.run)
+			anomaly, invalid = rw.run.Flags["anomaly"], rw.run.Flags["invalidated"]
+		}
+		acc := ""
+		if res.Sc+res.Si > 0 {
+			acc = strconv.FormatFloat(100*float64(res.Sc)/float64(res.Sc+res.Si), 'f', 1, 64)
+		}
+		cw.Write([]string{
+			res.RunID, startedAt, endedAt, rw.env, hash, dev,
+			bs(scored), bs(first), bs(verified), bs(anomaly), bs(invalid),
+			strconv.Itoa(res.N), strconv.Itoa(res.Sc), strconv.Itoa(res.Si),
+			ff(res.BitsPerSelection), ff(res.Bps), ff(res.TSeconds), acc,
+		})
+	}
+	cw.Flush()
 }
 
 // historyEntry is one completed run, compact — the raw material for

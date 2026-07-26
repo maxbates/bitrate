@@ -117,6 +117,13 @@ func OpenStore(dir string) (*Store, error) {
 	return s, nil
 }
 
+// Counts reports the loaded record counts — for the startup ledger banner.
+func (s *Store) Counts() (runs, results, variants int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.runs), len(s.results), len(s.variants)
+}
+
 func (s *Store) loadInstanceID() error {
 	path := filepath.Join(s.dir, "instance_id")
 	b, err := os.ReadFile(path)
