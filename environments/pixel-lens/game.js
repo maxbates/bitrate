@@ -1307,6 +1307,19 @@ function refreshSizePicker() {
   if (host) host.innerHTML = sizeOptionsHTML();
 }
 
+// Touch only. Tile size is half the decision — the other half is which device
+// and how many fingers, and a first-session player has no way to know either.
+// Three lines, shown at the one moment they're actionable: hands, device, and
+// the standing permission to go try it rather than reason about it.
+function touchTipsHTML() {
+  if (inputMode !== 'touch') return '';
+  return '<ul class="sp-tips">' +
+    '<li><b>fingers</b> — tablet: two index fingers. phone: one, so your hand never covers the board.</li>' +
+    '<li><b>device</b> — a tablet fits more tiles, so taps are worth more: take it if your arm moves freely, stay on the phone if reach is the limit.</li>' +
+    '<li><b>try it</b> — practice is free. a few seconds at two or three sizes, then trust your hand.</li>' +
+    '</ul>';
+}
+
 function showSizePicker() {
   const wrap = document.createElement('div');
   wrap.id = 'size-pick';
@@ -1315,9 +1328,10 @@ function showSizePicker() {
     '<div class="sp-title">how big should the tiles be?</div>' +
     '<div class="sp-sub">' +
     (inputMode === 'touch'
-      ? 'pick what your finger can hit first try. smaller tiles mean more of them — more bits per tap — right up until you start missing.'
+      ? 'more tiles means more bits per tap, but smaller tiles get missed — and a miss costs double. pick the smallest tile you hit almost every time.'
       : 'pick what you can click without aiming. smaller cells mean more of them — more bits per click — until the pointing costs more than the bits are worth.') +
     '</div>' +
+    touchTipsHTML() +
     '<div class="sp-opts">' + sizeOptionsHTML() + '</div>' +
     '<div class="sp-note">you can change this any time — <b>settings</b>, during practice</div>' +
     '</div>';
