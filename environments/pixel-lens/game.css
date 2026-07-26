@@ -206,14 +206,15 @@ body.armed #field { cursor: none; }
   left: 50%;
   top: 50%;
   width: 220px;
-  height: 0;
-  margin-left: -110px;
+  height: 36px;
+  margin: -18px 0 0 -110px;
   color: var(--accent);
-  font-size: 18px;
-  line-height: 0;
+  font-size: 36px;
+  line-height: 36px;
   text-align: right;
   pointer-events: none;
-  /* rotated via transform in JS; ▸ sits at the ring edge */
+  /* rotated via transform in JS; ▸ sits at the ring edge. The strip is one
+     line-height tall and centered so the glyph stays on the radial axis. */
 }
 
 /* ---- wrong-device banner: drum pad on a machine with no touchscreen ----
