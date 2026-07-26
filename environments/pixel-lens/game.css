@@ -17,7 +17,13 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 [hidden] { display: none !important; }
 
-html, body { height: 100%; }
+/* Small-viewport height, not percentage-of-viewport: a mobile browser's URL bar
+   slides away while you play, and a percentage height would retune the field
+   under the player — which here moves N, because the alphabet is the grid that
+   fits below the band. svh is the height with the toolbars shown, so it stays
+   put whether they're up or down. (height: 100% is the fallback for browsers
+   that don't know the unit, which then drop the second declaration.) */
+html, body { height: 100%; height: 100svh; }
 
 body {
   background: var(--bg);

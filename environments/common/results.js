@@ -252,18 +252,36 @@ function wireActs(handlers, before) {
 // header content from ever drawing over the game (spec §4.3.1). onChange fires
 // when the height actually moves, for environments whose alphabet is derived
 // from the field's size.
+//
+// The band's height *is* the field's top edge, so anything that moves it moves
+// the game under the player mid-run — and on a phone the band sits one line
+// from rewrapping, so ordinary play moves it: the clock line appears on the
+// first selection, the run controls change with the mode, a count grows a
+// digit. Content must never do that. So the published height is latched to the
+// tallest the band has needed at this viewport size, and shorter states leave
+// the reserved space empty rather than pulling the field up. Only a real
+// viewport change (rotation, a resized window) re-opens the latch — that one is
+// the player's own doing, and the field should follow it.
 function trackHeaderHeight(onChange) {
   const bar = document.getElementById('topbar');
   if (!bar) return;
-  let last = 0;
+  let published = 0, vw = 0, vh = 0;
   const sync = () => {
+    if (window.innerWidth !== vw || window.innerHeight !== vh) {
+      vw = window.innerWidth;
+      vh = window.innerHeight;
+      published = 0;
+      bar.style.minHeight = ''; // measure what this viewport actually needs
+    }
     const h = bar.offsetHeight;
-    if (h === last) return;
-    last = h;
+    if (h <= published) return; // a shorter state (or hidden): hold the band
+    published = h;
+    bar.style.minHeight = h + 'px';
     document.documentElement.style.setProperty('--topbar-h', h + 'px');
     if (onChange) onChange(h);
   };
   new ResizeObserver(sync).observe(bar);
+  window.addEventListener('resize', sync);
   sync();
 }
 

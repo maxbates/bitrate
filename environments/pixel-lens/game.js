@@ -339,8 +339,17 @@ function setState(next) {
   } else if (next === 'armed') {
     modeBanner.textContent = 'armed';
     modeBanner.className = 'mode-armed';
+    // Two lengths of the same cue: the long one on a desktop band, the short
+    // one on a phone, where the long one wraps to a second row — and a second
+    // row here would push the field down and take a row of cells (and so N)
+    // with it, at the exact moment a scored run is about to start. The 60 s is
+    // still on screen either way; the HUD clock reads it out in armed state.
     modeHelp.innerHTML =
-      '<span class="act armed-note">first click starts the 60 s clock</span>' +
+      '<span class="act armed-note">' +
+      '<span class="wide-only">first ' + (inputMode === 'touch' ? 'tap' : 'click') +
+      ' starts the 60 s clock</span>' +
+      '<span class="narrow-only">' + (inputMode === 'touch' ? 'tap' : 'click') +
+      ' to start</span></span>' +
       '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</button>';
   } else if (next === 'scored') {
     modeBanner.textContent = 'scored run';
@@ -960,6 +969,18 @@ function onResize() {
     buildConfig(); // results stay up; next run uses the new grid
     return;
   }
+  // Same alphabet? Then nothing scoring depends on has moved. The field may
+  // have shifted a few pixels, but the same cols×rows of the same cell still
+  // fit, so N and bits/selection are untouched — re-lay the grid out where the
+  // field is now and let the run stand. Only a real change in N can invalidate
+  // a run (spec §7: the score is bits × selections, and bits is log2(N-1)),
+  // and a band that gained a line is not one.
+  const m = gridMetrics(cellMm);
+  if (grid && m.cols === grid.cols && m.rows === grid.rows && m.cell === grid.cell) {
+    buildConfig();
+    if (run && run.seq && run.pos < run.seq.length) placeTarget();
+    return;
+  }
   const wasScored = state === 'scored' && run && run.started;
   if (wasScored) {
     // N changed mid-run: the run cannot stand. Rebuild the config first so
@@ -1084,7 +1105,7 @@ function renderHud() {
     $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = Math.max(0, Math.ceil((DURATION_MS - nowT) / 1000)) + 's';
     $('hud-counts').textContent = 'N ' + (run.n || N) + ' · Sc ' + run.sc + ' · Si ' + run.si;
-    window.BitrateResults.renderSpark('hud-spark', run, BITS, elapsed);
+    window.BitrateResults.renderSpark('hud-spark', run, BITS, nowT);
     return;
   }
   // Practice: trailing-60 s window, so the figure reflects current skill

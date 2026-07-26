@@ -22,6 +22,10 @@
     "banner cfg hud"
     "help   cfg hud";
   align-items: center;
+  /* JS latches the band to the tallest state it has needed (trackHeaderHeight),
+     so a mode change can never pull the field up. Any space that reserves goes
+     to the bottom — the content stays exactly where it was. */
+  align-content: start;
   column-gap: 20px;
   row-gap: 7px;
   padding: 10px 18px;
@@ -71,6 +75,10 @@
 }
 #hud-bps { font-size: 20px; color: var(--fg); }
 .hud-unit { font-size: 12px; color: var(--dim); }
+/* The clock line is blank until a run starts. Keep its line box anyway: with
+   no text the block loses a line, and on a phone that first selection would
+   otherwise grow the band — which is the play field's top edge. */
+#hud-time:empty::before { content: "\00a0"; }
 
 /* ---- live pace graph (every environment's header) ----
    Blue line so it never collides with target colors. Rendered from page load
@@ -119,6 +127,9 @@
 /* Non-clickable lines (status notes) sit flush with the banner above them. */
 .act:not(.click) { padding-left: 0; padding-right: 0; }
 .armed-note { color: var(--accent); }
+/* Two lengths of one label: a phone band is one line from wrapping, and a
+   wrapped band is a shorter play field. Same meaning, fewer characters. */
+.narrow-only { display: none; }
 .act.click {
   cursor: pointer;
   border-color: var(--faint);
@@ -203,6 +214,8 @@
     max-width: none;
   }
   #mode-help .act kbd { display: none; }
+  .wide-only { display: none; }
+  .narrow-only { display: inline; }
   #mode-banner { font-size: 11px; padding: 3px 7px; letter-spacing: .08em; }
   #cfg .act { padding: 6px 9px; }
   #cfg .act .lbl { display: none; }  /* the gear alone is the button */
