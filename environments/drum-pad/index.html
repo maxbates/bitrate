@@ -3,17 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>bit-rate — pixel lens</title>
-<link rel="stylesheet" href="game.css">
+<title>bit-rate — drum pad</title>
+<link rel="stylesheet" href="../pixel-lens/game.css">
 <link rel="stylesheet" href="../common/results.css">
 </head>
 <body>
-  <!-- Header band (spec §4.3.1): mode + run controls on the left, the honest
-       accounting in the middle with the settings button under it — viewport
-       resolution and the derived alphabet; N is the hitbox grid, not raw
-       pixels, since any click inside a cell selects it (spec §5 pixel-lens) —
-       and on the right the figures the assignment requires: running bits/s at
-       >=1 Hz plus N / Sc / Si (rules 3 and 4), with the pace graph. -->
+  <!-- drum pad — the touch half of pixel lens: same grid, same honest-N
+       accounting (cells are the distinguishable selections, not raw pixels),
+       finger-sized cells and no loupe. It runs pixel-lens's implementation
+       with the input mode fixed to touch; only this page and the environment
+       name differ. -->
   <header id="topbar">
     <div id="mode-banner" class="mode-practice">practice</div>
     <div id="mode-help"></div>
@@ -71,10 +70,9 @@
     <div id="card"></div>
   </div>
 
-  <!-- Settings: cell size drives N and lens magnification; every change is
-       a new content-addressed variant. No input row — pixel lens is the mouse
-       game and drum pad is the touch one, so the modality is fixed by which
-       page you opened. -->
+  <!-- Settings: cell size drives N; every change is a new content-addressed
+       variant. No input row — drum pad is the touch game, pixel lens is the
+       mouse one, so the modality is fixed by which page you opened. -->
   <a id="gallery-link" href="/env/" title="back to all games">← gallery</a>
   <div id="sheet">
     <div class="sh-row">
@@ -120,6 +118,7 @@
   </div>
 
 <script src="../common/results.js"></script>
-<script src="game.js"></script>
+<script>window.BITRATE_INPUT = 'touch';</script>
+<script src="../pixel-lens/game.js"></script>
 </body>
 </html>

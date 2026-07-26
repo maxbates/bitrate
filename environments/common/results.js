@@ -174,11 +174,18 @@ function sparkSeries(keylog, bits, nowT) {
   return pts;
 }
 
-// Returns the sparkline SVG + caption, or '' when there isn't enough data yet.
-// Empty string collapses the host (.hud-spark-host:empty { display:none }).
+// Returns the sparkline SVG + caption. It renders from page load — an empty
+// axis before the first selection rather than nothing — so the header band
+// keeps a constant height and the graph is a fixture of the UI, not something
+// that appears once you've started playing.
 function sparkHTML(keylog, bits, nowT) {
   const pts = sparkSeries(keylog, bits, nowT);
-  if (pts.length < 2) return '';
+  if (pts.length < 2) {
+    const base = SPARK_H - SPARK_PAD;
+    return '<svg class="spark-svg" viewBox="0 0 ' + SPARK_W + ' ' + SPARK_H + '" preserveAspectRatio="none">' +
+      '<line class="spark-base" x1="' + SPARK_PAD + '" y1="' + base + '" x2="' + (SPARK_W - SPARK_PAD) + '" y2="' + base + '"/></svg>' +
+      '<div class="spark-cap">bits/s · trailing 60&thinsp;s</div>';
+  }
   const span = sparkSpanMs(nowT), t0 = nowT - span;
   let maxB = 1;
   for (const p of pts) if (p.b > maxB) maxB = p.b;
@@ -198,9 +205,71 @@ function sparkHTML(keylog, bits, nowT) {
     '<div class="spark-cap">bits/s · trailing 60&thinsp;s</div>';
 }
 
+// Paint the header's pace graph from whatever run is live — or an empty axis
+// when there isn't one yet, so the graph is a fixture of the header rather
+// than something that appears once you start playing. One call site per
+// environment's renderHud.
+function renderSpark(hostId, run, bits, nowT) {
+  const el = document.getElementById(hostId);
+  if (!el) return;
+  el.innerHTML = sparkHTML(
+    run && run.started ? run.keylog : [],
+    (run && run.bits) || bits,
+    run && run.started ? nowT : 0,
+  );
+}
+
+// ---- action controls: one binder for both control strips ----
+// #mode-help (in play) and #res-footer (score screen) carry the same
+// <button class="act click" data-act="…"> markup in every environment, so a
+// single binder covers both. `before` runs on any click in either strip —
+// environments with audio use it to resume a suspended AudioContext, which
+// browsers only allow from a user gesture.
+function wireActs(handlers, before) {
+  const onClick = (e) => {
+    if (before) before();
+    const act = e.target.closest('[data-act]');
+    if (!act) return;
+    // Keyboard activation (detail 0) is already handled by each game's own
+    // Enter/Esc keydown handler — acting here too would fire the action twice.
+    if (e.detail === 0) return;
+    act.blur(); // a focused button would swallow the next Enter/Space in play
+    const fn = handlers[act.dataset.act];
+    if (fn) fn();
+  };
+  // One listener on the header (it contains both the run controls and the
+  // settings button) and one on the score screen's footer.
+  ['topbar', 'res-footer'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('click', onClick);
+  });
+}
+
+// The header band reflows with content (the config line rewrapping, the run
+// controls changing) as well as with the viewport, so its height isn't a
+// constant the CSS can hard-code. Publish the measured height as --topbar-h;
+// every environment's play field starts at that offset, which is what keeps
+// header content from ever drawing over the game (spec §4.3.1). onChange fires
+// when the height actually moves, for environments whose alphabet is derived
+// from the field's size.
+function trackHeaderHeight(onChange) {
+  const bar = document.getElementById('topbar');
+  if (!bar) return;
+  let last = 0;
+  const sync = () => {
+    const h = bar.offsetHeight;
+    if (h === last) return;
+    last = h;
+    document.documentElement.style.setProperty('--topbar-h', h + 'px');
+    if (onChange) onChange(h);
+  };
+  new ResizeObserver(sync).observe(bar);
+  sync();
+}
+
   window.BitrateResults = {
     fmtMs, tilesHTML, paceChartSVG, ikiChartSVG,
-    trailingBps, sparkSeries, sparkHTML,
+    trailingBps, sparkSeries, sparkHTML, renderSpark, wireActs, trackHeaderHeight,
   };
 })();
 

@@ -29,87 +29,25 @@ body {
 
 /* ---- top bar ---- */
 
-/* Three in-flow zones: left = mode + Enter/Esc, middle = compact config,
-   right = graph + key metrics. Tall enough that the left cluster fits. */
-#topbar {
-  position: relative;
-  height: 112px;
-  border-bottom: 1px solid var(--faint);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 22px;
-  padding: 0 20px;
-}
-
-/* Middle: the config accounting, kept compact so it clears the graph. */
-#res-info {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--dim);
-  font-size: 12.5px;
-  line-height: 1.55;
-  text-align: center;
-}
-#res-info b { color: var(--fg); font-weight: normal; }
-
-#corner { flex: 0 0 auto; }
-#mode-banner {
-  display: inline-block;
-  font-size: 13px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  padding: 4px 10px;
-  border-radius: 4px;
-}
-.mode-practice { color: var(--dim); border: 1px solid var(--faint); }
-.mode-practice-live { color: var(--live); border: 1px solid var(--live); }
-.mode-armed    { color: #111; background: var(--accent); }
-.mode-scored   { color: var(--err); border: 1px solid var(--err); }
-.mode-scored::before { content: "● "; }
-
-#mode-help { margin-top: 6px; font-size: 12px; line-height: 1.6; }
-#mode-help .act { color: var(--dim); display: block; }
-#mode-help .act.click { cursor: pointer; }
-#mode-help .act.click:hover { color: var(--fg); }
-#mode-help kbd {
-  color: var(--fg);
-  border: 1px solid var(--faint);
-  border-radius: 3px;
-  padding: 0 5px;
-  font-size: 11px;
-  margin-right: 6px;
-}
-#mode-help .armed-note { color: var(--accent); }
-
-/* Right zone: graph + metrics, side by side and in-flow (overrides the shared
-   absolute placement, which is meant for the floating-corner environments). */
-#hud {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  color: var(--dim);
-  font-size: 14px;
-  line-height: 1.45;
-}
-#hud-metrics { text-align: right; }
-#topbar .hud-spark-host:not(:empty) {
-  position: static;
-  right: auto;
-  margin-right: 0;
-}
-#hud-bps { font-size: 18px; }
-.hud-unit { font-size: 12px; }
+/* The band itself is shared (../common/results.css, loaded after this file).
+   Only the sizing is local: this environment's grid is derived from whatever
+   space the band leaves, so the controls are kept compact. */
+#topbar { column-gap: 18px; }
+#topbar #mode-help { gap: 4px; }
+#topbar #mode-help .act { font-size: 12px; padding: 4px 8px; }
 
 /* ---- the field ---- */
 
 #field {
   position: absolute;
-  top: 112px; /* matches #topbar height */
+  /* JS measures the bar and publishes --topbar-h before every buildConfig(),
+     so the field starts exactly where the bar ends however the bar wraps. */
+  top: var(--topbar-h, 134px);
   left: 0;
   right: 0;
-  bottom: 54px; /* footer strip: the gear lives there, never over the grid */
+  /* Just enough footer strip that the gallery link never sits over a tappable
+     cell. Settings moved to the header band, so nothing else is down there. */
+  bottom: 46px;
   cursor: none; /* the loupe is the cursor (mouse mode); JS sets auto for touch */
   overflow: hidden;
   opacity: .999; /* own compositing layer */
@@ -207,6 +145,21 @@ body.armed #field { cursor: none; }
   border-radius: 50%;
   opacity: .5;
 }
+/* The next target only: one ring collapsing onto it, the live cell's bull's-eye
+   at a whisper — a third of the travel, half the opacity, slower. It marks
+   where you're going after this without competing with the cue that says now. */
+.preview-dot .pcue {
+  position: absolute;
+  border: 1.5px solid var(--live);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+}
+.preview-dot.cue .pcue { animation: pre-ring-in .6s ease-out 1; }
+@keyframes pre-ring-in {
+  0%   { opacity: .45; left: -46px; top: -46px; width: 92px; height: 92px; }
+  100% { opacity: 0;   left: -13px; top: -13px; width: 26px; height: 26px; }
+}
 
 /* ---- tap feedback (touch mode): a ring that pops at the tap point ---- */
 
@@ -257,7 +210,7 @@ body.armed #field { cursor: none; }
   /* rotated via transform in JS; ▸ sits at the ring edge */
 }
 
-/* ---- settings: gear + bottom sheet (matches stream-typing) ---- */
+/* ---- settings sheet (matches stream-typing) ---- */
 
 #gallery-link {
   position: fixed;
@@ -273,22 +226,6 @@ body.armed #field { cursor: none; }
   z-index: 7;
 }
 #gallery-link:hover { color: var(--fg); border-color: var(--dim); }
-
-#gear {
-  position: fixed;
-  bottom: 16px;
-  right: 18px;
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--dim);
-  background: none;
-  border: 1px solid var(--faint);
-  border-radius: 6px;
-  padding: 6px 12px;
-  cursor: pointer;
-  z-index: 7;
-}
-#gear:hover { color: var(--fg); border-color: var(--dim); }
 
 #sheet {
   position: fixed;

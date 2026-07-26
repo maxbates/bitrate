@@ -106,6 +106,7 @@ function buildConfig() {
     font_stack: 'system-mono',
   };
   DURATION_MS = CONFIG.duration_s * 1000;
+  renderCfg();
 }
 
 // ---- dom ----
@@ -202,30 +203,46 @@ async function startRun(scored) {
   renderHud();
 }
 
+// What the settings sheet is currently set to, short enough for the corner.
+function configLabel() {
+  return Z + ' lanes · ±' + M + ' · ' + S.tempo + '/min';
+}
+
+// The middle of the header: what this variant is set to, with the settings
+// button under it — the label and the way to change it are one object. The
+// N and bits/selection are the honest accounting (spec §7), always on screen.
+function renderCfg() {
+  $('res-info').innerHTML =
+    configLabel() + ' · N <b>' + N + '</b> · <b>' + BITS.toFixed(2) + '</b> bits/step';
+}
+
+// The practice corner: the two run controls. What the game is set to, and
+// the button that changes it, live in the header's middle zone.
+function renderPracticeHelp() {
+  modeHelp.innerHTML =
+    '<button type="button" class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</button>' +
+    '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</button>';
+}
+
 function setState(next) {
   state = next;
   document.body.classList.toggle('armed', next === 'armed');
   overlay.hidden = next !== 'error';
   resultsEl.hidden = next !== 'done';
   fieldEl.hidden = next === 'done';
-  $('hud').hidden = next === 'done';
-  $('corner').hidden = next === 'done';
-  $('gear').hidden = next !== 'practice';
+  $('topbar').hidden = next === 'done';
   if (next !== 'practice') $('hud-spark').innerHTML = '';
   if (next !== 'practice' && sheetOpen) closeSheet();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
     modeBanner.className = 'mode-practice';
-    modeHelp.innerHTML =
-      '<span class="act">keep your thumb on the arc · be in each dot’s lane as it lands</span>' +
-      '<span class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</span>' +
-      '<span class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</span>';
+    renderPracticeHelp();
   } else if (next === 'armed') {
     modeBanner.textContent = 'armed';
     modeBanner.className = 'mode-armed';
     modeHelp.innerHTML =
       '<span class="act armed-note">dots incoming — the clock starts when they land</span>' +
-      '<span class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</span>';
+      '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</button>';
   } else if (next === 'scored') {
     modeBanner.textContent = 'scored run';
     modeBanner.className = 'mode-scored';
@@ -560,15 +577,15 @@ function scheduleFlush(delay) {
 
 // ---- HUD (shared trailing-60s + sparkline) ----
 
-function hudCounts() { $('hud-counts').textContent = 'Sc ' + run.sc + ' · Si ' + run.si; }
+function hudCounts() { $('hud-counts').textContent = 'N ' + (run.n || N) + ' · Sc ' + run.sc + ' · Si ' + run.si; }
 
 function renderHud() {
   if (state === 'done') return;
   if (!run || (!run.started && !run.anyInput && state !== 'scored')) {
     $('hud-bps').innerHTML = '0.0 <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = state === 'armed' ? 'starts in ' + Math.max(1, Math.ceil((run ? run.t0 - performance.now() : 0) / 1000)) + 's' : '';
-    $('hud-counts').textContent = '';
-    $('hud-spark').innerHTML = '';
+    $('hud-counts').textContent = 'N ' + N + ' · Sc 0 · Si 0';
+    window.BitrateResults.renderSpark('hud-spark', null, BITS, 0);
     if (run && !run.scored && run.pos > 0) hudCounts();
     return;
   }
@@ -578,14 +595,14 @@ function renderHud() {
     $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000)) + 's';
     hudCounts();
-    $('hud-spark').innerHTML = '';
+    window.BitrateResults.renderSpark('hud-spark', run, BITS, elapsed);
     return;
   }
   const tr = R.trailingBps(run.keylog, run.bits, elapsed);
   $('hud-bps').innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
   $('hud-time').textContent = Math.floor(elapsed / 1000) + 's practice';
-  $('hud-counts').textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
-  $('hud-spark').innerHTML = R.sparkHTML(run.keylog, run.bits, elapsed);
+  $('hud-counts').textContent = 'N ' + (run.n || N) + ' · Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
+  window.BitrateResults.renderSpark('hud-spark', run, BITS, elapsed);
 }
 setInterval(renderHud, 1000);
 
@@ -660,12 +677,9 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-modeHelp.addEventListener('click', (e) => {
-  const act = e.target.closest('[data-act]');
-  if (!act) return;
-  if (act.dataset.act === 'arm') armScoredRun();
-  else if (act.dataset.act === 'seed') toPractice();
-});
+// Corner strip in play + the score screen's footer: same buttons, one binder
+// (shared with every other environment — see common/results.js).
+BitrateResults.wireActs({ arm: armScoredRun, seed: toPractice, settings: toggleSheet });
 
 window.addEventListener('blur', () => { if (state === 'scored' && run && run.started) abortScoredRun('focus_lost'); });
 
@@ -673,6 +687,15 @@ window.addEventListener('blur', () => { if (state === 'scored' && run && run.sta
 
 const sheetEl = $('sheet');
 let sheetOpen = false;
+// One entry point for the sheet — the header's settings button and the score
+// screen's both land here. From the score screen it drops back to
+// practice first: settings are a practice-mode thing (a config change mints a
+// new variant, so it can't happen mid-run).
+async function toggleSheet() {
+  if (state !== 'practice') { await toPractice(); openSheet(); return; }
+  sheetOpen ? closeSheet() : openSheet();
+}
+
 function openSheet() { if (state !== 'practice') return; sheetOpen = true; syncSheet(); sheetEl.classList.add('open'); }
 function closeSheet() { sheetOpen = false; sheetEl.classList.remove('open'); if (document.activeElement && sheetEl.contains(document.activeElement)) document.activeElement.blur(); }
 
@@ -691,6 +714,7 @@ function syncSheet() {
     Z + ' lanes · max jump ±' + M + ' → N=' + N + ' (' + BITS.toFixed(2) + ' bits/step) · ' +
     S.tempo + '/min (' + (S.tempo / 60).toFixed(1) + '/s) · ' +
     (S.judge === 'window' ? '±' + WIN_MS + ' ms window' : 'read at crossing') + ' · changes restart the bout';
+  renderCfg();
 }
 
 function applySetting(mut) { mut(); saveSettings(); renderMaxStepSeg(); buildConfig(); syncSheet(); toPractice(); }
@@ -707,7 +731,6 @@ bindSeg('seg-look', (v) => { S.look = Number(v); });
 bindSeg('seg-judge', (v) => { S.judge = v; });
 bindSeg('seg-window', (v) => { S.window = Number(v); });
 
-$('gear').addEventListener('click', (e) => { e.currentTarget.blur(); sheetOpen ? closeSheet() : openSheet(); });
 
 // ---- headless test hook (a real thumb + real-time pacing can't be automated) ----
 
@@ -760,6 +783,9 @@ async function applyCfgParam() {
   } catch { /* ship build or unknown hash: defaults */ }
 }
 
+// The header is an in-flow band whose height moves with content and
+// viewport; publish it so the play area always starts below it.
+window.BitrateResults.trackHeaderHeight();
 loadSettings();
 buildConfig();
 renderMaxStepSeg();

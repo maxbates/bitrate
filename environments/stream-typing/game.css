@@ -36,7 +36,12 @@ body {
 
 #stage {
   position: absolute;
-  inset: 0;
+  /* The header band is in-flow; JS publishes its measured height, so the
+     play area always starts exactly below it (spec §4.3.1). */
+  top: var(--topbar-h, 96px);
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -117,58 +122,9 @@ body {
 #notice.warn { color: var(--err); }
 #notice b { color: inherit; font-weight: bold; }
 
-/* ---- HUD: corner, low contrast, no shimmer (spec §7) ---- */
-
-#hud {
-  position: fixed;
-  top: 14px;
-  right: 18px;
-  text-align: right;
-  color: var(--dim);
-  font-size: 15px;
-  line-height: 1.5;
-  z-index: 5;
-}
-#hud-bps { font-size: 19px; }
-.hud-unit { font-size: 12px; }
-
-/* ---- corner cluster: mode chip + actions ---- */
-
-#corner {
-  position: fixed;
-  top: 14px;
-  left: 18px;
-  z-index: 5;
-}
-#mode-banner {
-  display: inline-block;
-  font-size: 13px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  padding: 4px 10px;
-  border-radius: 4px;
-}
-.mode-practice { color: var(--dim); border: 1px solid var(--faint); }
-/* Practice goes green once the player is actually typing. */
-.mode-practice-live { color: var(--live); border: 1px solid var(--live); }
-.mode-armed    { color: #111; background: var(--accent); }
-.mode-scored   { color: var(--err); border: 1px solid var(--err); }
-.mode-scored::before { content: "● "; }
-
-#mode-help { margin-top: 8px; font-size: 13px; line-height: 1.7; }
-#mode-help .act { color: var(--dim); display: block; }
-#mode-help .act.click { cursor: pointer; }
-#mode-help .act.click:hover { color: var(--fg); }
-#mode-help kbd {
-  color: var(--fg);
-  border: 1px solid var(--faint);
-  border-radius: 3px;
-  padding: 0 5px;
-  font-family: var(--mono);
-  font-size: 12px;
-  margin-right: 6px;
-}
-#mode-help .armed-note { color: var(--accent); }
+/* The header band (mode chip, config + settings, the HUD figures) and the
+   run-control buttons are shared across every environment — see
+   ../common/results.css, loaded after this file. */
 
 /* Armed: the chip goes amber and so does the caret — enough signal at the
    fixation point without a shouting border or center banner. */
@@ -193,7 +149,7 @@ body.armed #caret { border-color: var(--accent); }
    fade overlays through a translucent layer makes their edges visible as
    seams.) */
 
-/* ---- settings: gear + bottom sheet ---- */
+/* ---- settings: bottom sheet ---- */
 
 #gallery-link {
   position: fixed;
@@ -209,22 +165,6 @@ body.armed #caret { border-color: var(--accent); }
   z-index: 7;
 }
 #gallery-link:hover { color: var(--fg); border-color: var(--dim); }
-
-#gear {
-  position: fixed;
-  bottom: 16px;
-  right: 18px;
-  font-family: var(--mono);
-  font-size: 13px;
-  color: var(--dim);
-  background: none;
-  border: 1px solid var(--faint);
-  border-radius: 6px;
-  padding: 6px 12px;
-  cursor: pointer;
-  z-index: 7;
-}
-#gear:hover { color: var(--fg); border-color: var(--dim); }
 
 #sheet {
   position: fixed;

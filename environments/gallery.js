@@ -10,48 +10,81 @@
 
 const $ = (id) => document.getElementById(id);
 
+// One entry per game. `n` and `trait` sit under the title — how many things
+// you're choosing between, and what you're choosing with — then the blurb.
 const ENV_META = {
-  'stream-typing': {
-    name: 'stream-typing',
-    desc: 'the serious baseline: pinned stream, deep lookahead, self-paced keys',
-    href: 'stream-typing/',
-  },
   'pixel-lens': {
-    name: 'pixel-lens',
-    desc: 'a target lights up on a huge grid; find it, loupe it, click it — Fitts’s law says the pointer loses',
+    name: 'pixel lens',
+    n: 'N = your viewport',
+    trait: 'mouse',
+    desc: 'a target lights up on a huge grid. find it, move to it, click it.',
     href: 'pixel-lens/',
   },
+  'drum-pad': {
+    name: 'drum pad',
+    n: 'N = your viewport',
+    trait: 'touchscreen',
+    desc: 'tap targets on a large grid.',
+    href: 'drum-pad/',
+  },
+  'stream-typing': {
+    name: 'stream typing',
+    n: 'N = 27',
+    trait: 'keyboard',
+    desc: 'self-paced typing, random alphabet. the baseline.',
+    href: 'stream-typing/',
+  },
   'voice-babble': {
-    name: 'voice-babble',
-    desc: 'say the sounds — recognized on-device from your own calibrated voice; latency is the enemy',
+    name: 'voice babble',
+    n: 'N = 6–9',
+    trait: 'your voice',
+    desc: 'calibrate your voice, then sing do re mi.',
     href: 'voice-babble/',
   },
+  'lane-tap': {
+    name: 'lane tap',
+    n: 'N = 9–26',
+    trait: 'touchscreen',
+    desc: 'a strip of lanes along the bottom. tap the lit one; the stack above shows what is coming.',
+    href: 'lane-tap/',
+  },
   'beat-hands': {
-    name: 'beat-hands',
-    desc: 'Beat Saber, honestly scored: paced notes, webcam swipes — can deep lookahead beat self-pacing?',
+    name: 'beat hands',
+    n: 'N = 8–16',
+    trait: 'camera, touch or keys',
+    desc: 'notes arrive on the beat. cut each one in the direction it points.',
     href: 'beat-hands/',
   },
   'twin-stick': {
-    name: 'twin-stick',
-    desc: 'a gamepad, both thumbs at once: 8-way octant ribbon per stick — a real parallel channel, keyboard-competitive?',
+    name: 'twin stick',
+    n: 'N = 8 per stick',
+    trait: 'gamepad',
+    desc: 'both thumbsticks at once. on every beat, point each stick where its ribbon says.',
     href: 'twin-stick/',
   },
   'parabola-fall': {
-    name: 'parabola-fall',
-    desc: 'one thumb on a smile arc: dots fall into lanes at a fixed pace, catch each as it lands — a falling-lane rhythm game',
+    name: 'parabola fall',
+    n: 'N = 7–21',
+    trait: 'one thumb',
+    desc: 'dots fall into lanes along an arc. slide your thumb so you are in each lane as it lands.',
     href: 'parabola-fall/',
   },
-  'lane-tap': {
-    name: 'lane-tap',
-    desc: 'a strip of lanes at the bottom edge, the queue stacked above — self-paced ballistic taps, hands never occlude the lookahead',
-    href: 'lane-tap/',
+  'word-typing': {
+    name: 'word typing',
+    n: 'N = 1053 words',
+    trait: 'keyboard',
+    desc: 'type whole words instead of letters. word-level targets are banned by the brief, so it never counted.',
+    href: 'word-typing/',
   },
 };
 
-// Off-brief environments hidden from the app (code kept on disk for
-// word-typing; speech-words deleted — ASR finals latency made it moot).
-// Their historical variants/runs are filtered out of every view.
-const HIDDEN_ENVS = new Set(['word-typing', 'speech-words']);
+// The games still in the running, in the order they're worth trying.
+const FEATURED = ['drum-pad', 'pixel-lens', 'stream-typing', 'voice-babble'];
+// The graveyard: built and played, but beaten by something above or ruled out.
+// Shown at the bottom of the page and kept out of the leaderboard.
+const GRAVEYARD = ['lane-tap', 'beat-hands', 'twin-stick', 'parabola-fall', 'word-typing'];
+// Deleted outright; their historical runs are filtered from every view.
+const HIDDEN_ENVS = new Set(['speech-words']);
 
 const DEVICE_ID = localStorage.getItem('bitrate_device_id') || '';
 
@@ -110,13 +143,39 @@ function median(xs) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-function envOf(h) { return h.environment || 'unknown'; }
-
-function knownEnvs(data) {
-  const envs = new Set(Object.keys(ENV_META));
-  for (const v of data ? data.variants : []) envs.add(v.environment);
-  return [...envs].filter((e) => !HIDDEN_ENVS.has(e));
+// Which game a run belongs to. Normally that's the environment recorded in its
+// config — but pixel lens and drum pad were one environment ('pixel-lens',
+// with input as a setting) until they were split into two games, so runs from
+// before the split are placed by the input mode their variant was played with.
+function envOf(h) {
+  const env = h.environment || 'unknown';
+  if (env !== 'pixel-lens') return env;
+  return variantConfig(h.variant_id).input === 'touch' ? 'drum-pad' : 'pixel-lens';
 }
+
+function variantConfig(variantId) {
+  const v = (DATA && DATA.variants || []).find((x) => x.config_hash === variantId);
+  if (!v) return {};
+  return typeof v.config === 'string' ? JSON.parse(v.config) : v.config;
+}
+
+// Every game with a card, listed order first, anything unrecognized after.
+function knownEnvs(data) {
+  const listed = [...FEATURED, ...GRAVEYARD];
+  const seen = new Set(listed);
+  const extra = [];
+  for (const v of data ? data.variants : []) {
+    const env = v.environment;
+    if (!seen.has(env) && !HIDDEN_ENVS.has(env)) { seen.add(env); extra.push(env); }
+  }
+  return [...listed, ...extra];
+}
+
+// The leaderboard ranks the games still in the running: the graveyard is out,
+// and so are environments that no longer exist (their runs stay in the history
+// and the progress strips, but there's nothing left to play or rank).
+function boardEnvs() { return FEATURED.filter((e) => ENV_META[e]); }
+function ranks(env) { return boardEnvs().includes(env); }
 
 function agoFmt(iso) {
   const ms = Date.now() - new Date(iso).getTime();
@@ -141,7 +200,7 @@ function configSummary(variantId) {
     if (c.chunk_size) s += ' · chunk ' + c.chunk_size;
     return s;
   }
-  if (v.environment === 'pixel-lens') {
+  if (v.environment === 'pixel-lens' || v.environment === 'drum-pad') {
     return c.cell_mm + ' mm · ' + c.grid_cols + '×' + c.grid_rows;
   }
   if (v.environment === 'voice-babble') {
@@ -165,61 +224,46 @@ function configSummary(variantId) {
 // ---- environment tiles (spec §5 gallery) ----
 
 function renderTiles(data) {
-  const wrap = $('tiles');
-  wrap.innerHTML = '';
-  for (const env of knownEnvs(data)) {
-    const meta = ENV_META[env] || { name: env, desc: '', href: env + '/' };
-    const scored = data ? data.history.filter((h) => envOf(h) === env && h.verified && h.is_scored) : [];
-    const best = scored.length ? Math.max(...scored.map((h) => h.bps)) : null;
-    const med = median(scored.map((h) => h.bps));
-    const fc = median(scored.filter((h) => h.is_first_contact).map((h) => h.bps));
-    const el = document.createElement('div');
-    el.className = 'tile-env';
-    el.innerHTML =
-      '<div class="t-head"><span class="t-name">' + meta.name +
-      (meta.offBrief ? ' <span class="off-brief" title="' + meta.offBrief + '">off-brief</span>' : '') +
-      '</span><span class="t-bits">' + bitsLabel(env) + '</span></div>' +
-      '<div class="t-desc">' + meta.desc +
-      (meta.offBrief ? ' — <span class="off-brief-note">' + meta.offBrief + '; lab only, never ships</span>' : '') +
-      '</div>' +
-      '<div class="t-stats">' +
-      stat(scored.length || '—', scored.length === 1 ? 'run' : 'runs') +
-      stat(best !== null ? best.toFixed(1) : '—', 'best bps') +
-      stat(med !== null ? med.toFixed(1) : '—', 'median') +
-      stat(fc !== null ? fc.toFixed(1) : '—', 'first-contact') +
-      '</div>' +
-      '<div class="t-foot">' +
-      '<span class="t-spark">' + (scored.length > 1 ? sparkSVG(scored.map((h) => h.bps)) : '') + '</span>' +
-      '<a class="launch" href="' + meta.href + '">play</a>' +
-      '</div>';
-    wrap.appendChild(el);
+  fillCards($('tiles'), FEATURED, data);
+  const grave = GRAVEYARD.filter((e) => ENV_META[e]);
+  if (grave.length) {
+    $('graveyard-section').hidden = false;
+    fillCards($('graveyard'), grave, data);
   }
+}
+
+function fillCards(wrap, envs, data) {
+  wrap.innerHTML = '';
+  for (const env of envs) wrap.appendChild(card(env, data));
+}
+
+// Title, then what you're choosing between (N) and what you're choosing with,
+// then the blurb. Footer: how it has actually gone, and the way in.
+function card(env, data) {
+  const meta = ENV_META[env] || { name: env, desc: '', href: env + '/' };
+  const scored = data ? data.history.filter((h) => envOf(h) === env && h.verified && h.is_scored) : [];
+  const best = scored.length ? Math.max(...scored.map((h) => h.bps)) : null;
+  const med = median(scored.map((h) => h.bps));
+  const el = document.createElement('div');
+  el.className = 'tile-env';
+  el.innerHTML =
+    '<div class="t-name">' + meta.name + '</div>' +
+    '<div class="t-n">' + (meta.n || '') + '</div>' +
+    '<div class="t-trait">' + (meta.trait || '') + '</div>' +
+    '<div class="t-desc">' + meta.desc + '</div>' +
+    '<div class="t-foot">' +
+    '<span class="t-stats">' +
+    stat(scored.length || '—', scored.length === 1 ? 'play' : 'plays') +
+    stat(best !== null ? best.toFixed(1) : '—', 'best bps') +
+    stat(med !== null ? med.toFixed(1) : '—', 'median bps') +
+    '</span>' +
+    '<a class="launch" href="' + meta.href + '">play</a>' +
+    '</div>';
+  return el;
 }
 
 function stat(v, l) {
   return '<span class="t-stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></span>';
-}
-
-function bitsLabel(env) {
-  if (env === 'stream-typing') return 'N=27 · 4.70 bits/sel';
-  if (env === 'pixel-lens') return 'N = your viewport';
-  if (env === 'voice-babble') return 'N=6–26 · your voice';
-  if (env === 'beat-hands') return 'N=8–16 · paced';
-  if (env === 'twin-stick') return '2×N=8 · gamepad';
-  if (env === 'parabola-fall') return 'N=7–21 · falling lanes';
-  if (env === 'lane-tap') return 'N=9–26 · self-paced taps';
-  return '';
-}
-
-function sparkSVG(vals) {
-  const W = 120, H = 34, n = vals.length;
-  const { lo, hi } = DATA.dom; // shared log axis across every tile
-  const pts = vals.map((v, i) =>
-    (n > 1 ? (i / (n - 1)) * (W - 8) + 4 : W / 2) + ',' + yLog(v, lo, hi, 4, H - 10));
-  return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '">' +
-    '<polyline class="data-line" points="' + pts.join(' ') + '"/>' +
-    '<circle class="data-dot" cx="' + pts[pts.length - 1].split(',')[0] +
-    '" cy="' + pts[pts.length - 1].split(',')[1] + '" r="3.5"/></svg>';
 }
 
 // ---- your progress (spec §4.4: bps against run index, per game mode) ----
@@ -236,7 +280,8 @@ function renderProgress(data) {
     if (runs.length < 2) continue;
     const fig = document.createElement('figure');
     fig.innerHTML =
-      '<figcaption>' + env + ' · ' + runs.length + ' runs · bits/s, log scale (● scored · ○ practice)</figcaption>' +
+      '<figcaption>' + ((ENV_META[env] || {}).name || env) + ' · ' + runs.length +
+      ' runs · bits/s, log scale (● scored · ○ practice)</figcaption>' +
       progressSVG(runs);
     wrap.appendChild(fig);
   }
@@ -269,9 +314,10 @@ function progressSVG(runs) {
 // ---- leaderboard ----
 
 function renderTabs() {
-  const tabs = ['all', ...knownEnvs(DATA)];
+  const tabs = ['all', ...boardEnvs()];
   $('board-tabs').innerHTML = tabs.map((t) =>
-    '<button data-t="' + t + '"' + (t === boardFilter ? ' class="on"' : '') + '>' + t + '</button>').join('');
+    '<button data-t="' + t + '"' + (t === boardFilter ? ' class="on"' : '') + '>' +
+    ((ENV_META[t] || {}).name || t) + '</button>').join('');
 }
 
 $('board-tabs').addEventListener('click', (e) => {
@@ -284,7 +330,8 @@ $('board-tabs').addEventListener('click', (e) => {
 });
 
 function renderBoard() {
-  const rows = DATA.rows.filter((r) => boardFilter === 'all' || envOf(r) === boardFilter);
+  const rows = DATA.rows.filter((r) => ranks(envOf(r)))
+    .filter((r) => boardFilter === 'all' || envOf(r) === boardFilter);
   $('board-note').textContent = ' · best verified scored run per player × config';
   if (!rows.length) {
     $('board').innerHTML =
@@ -300,8 +347,7 @@ function renderBoard() {
       '<td class="rank">' + r.rank + '</td>' +
       '<td><span class="player">' + r.pseudonym + '</span>' + you + '</td>' +
       '<td class="bps">' + r.bps.toFixed(2) + '</td>' +
-      '<td>' + envOf(r) +
-      ((ENV_META[envOf(r)] || {}).offBrief ? ' <span class="off-brief">off-brief</span>' : '') + '</td>' +
+      '<td>' + ((ENV_META[envOf(r)] || {}).name || envOf(r)) + '</td>' +
       '<td>' + configSummary(r.variant_id) + '</td>' +
       '<td>' + acc + '</td>' +
       '<td>' + agoFmt(r.ended_at) + '</td></tr>';

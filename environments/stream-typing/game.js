@@ -19,7 +19,11 @@ const DEFAULTS = {
   alphabet: 'abcdefghijklmnopqrstuvwxyz',
   lookahead: 8,
   fixation: 'pinned',
-  chunk_size: null,
+  // Groups of 4 by default: the separators are display-only glyphs and never
+  // targets (spec §2.3), but they give the eye a landing place, which is what
+  // an unfamiliar player needs before they'll sit still for a scored run.
+  // Off and 3/5/6 are one tap away in the sheet.
+  chunk_size: 4,
   audio_feedback: false,
   error_policy: 'advance',
   backspace: true,
@@ -29,6 +33,8 @@ const DEFAULTS = {
 };
 const SETTINGS_KEY = 'bitrate_settings_v1';
 const TUNABLE = ['alphabet', 'lookahead', 'chunk_size', 'audio_feedback'];
+// Short names for the alphabets the sheet offers, keyed by size (see index.html).
+const ALPHA_LABELS = { 9: 'home row', 26: 'a–z', 36: 'a–z 0–9' };
 
 let CONFIG, N, BITS, ALPHA, DURATION_MS, CHUNK;
 
@@ -39,6 +45,7 @@ function setConfig(cfg) {
   ALPHA = new Set(cfg.alphabet);
   DURATION_MS = cfg.duration_s * 1000;
   CHUNK = cfg.chunk_size || 0;
+  renderCfg();
 }
 
 function loadConfig() {
@@ -157,6 +164,28 @@ async function startRun(scored) {
   if (sheetOpen) syncSheet(); // config hash for the new run just arrived
 }
 
+// What the settings sheet is currently set to, short enough for the corner.
+function configLabel() {
+  return (ALPHA_LABELS[CONFIG.alphabet.length] || 'N ' + N) + ' · look ' + CONFIG.lookahead +
+    (CHUNK ? ' · chunk ' + CHUNK : '');
+}
+
+// The middle of the header: what this variant is set to, with the settings
+// button under it — the label and the way to change it are one object. The
+// N and bits/selection are the honest accounting (spec §7), always on screen.
+function renderCfg() {
+  $('res-info').innerHTML =
+    configLabel() + ' · N <b>' + N + '</b> · <b>' + BITS.toFixed(2) + '</b> bits/selection';
+}
+
+// The practice corner: the two run controls. What the game is set to, and
+// the button that changes it, live in the header's middle zone.
+function renderPracticeHelp() {
+  modeHelp.innerHTML =
+    '<button type="button" class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</button>' +
+    '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</button>';
+}
+
 function setState(next) {
   state = next;
   document.body.classList.toggle('armed', next === 'armed');
@@ -164,23 +193,19 @@ function setState(next) {
   resultsEl.hidden = next !== 'done';
   $('stage').hidden = next === 'done';
   // The results view carries all the numbers; the peripheral chrome goes.
-  $('hud').hidden = next === 'done';
-  $('corner').hidden = next === 'done';
+  $('topbar').hidden = next === 'done';
   // Settings only reachable from practice; never mid-run.
-  $('gear').hidden = next !== 'practice';
   if (next !== 'practice' && sheetOpen) closeSheet();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
     modeBanner.className = 'mode-practice';
-    modeHelp.innerHTML =
-      '<span class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</span>' +
-      '<span class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</span>';
+    renderPracticeHelp();
   } else if (next === 'armed') {
     modeBanner.textContent = 'armed';
     modeBanner.className = 'mode-armed';
     modeHelp.innerHTML =
       '<span class="act armed-note">first keypress starts the 60 s clock</span>' +
-      '<span class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</span>';
+      '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</button>';
   } else if (next === 'scored') {
     modeBanner.textContent = 'scored run';
     modeBanner.className = 'mode-scored';
@@ -621,8 +646,8 @@ function renderHud() {
   if (!run || !run.started) {
     hudBps.innerHTML = '0.0 <span class="hud-unit">bits/s</span>';
     hudTime.textContent = state === 'armed' ? CONFIG.duration_s + 's' : '';
-    hudCounts.textContent = '';
-    $('hud-spark').innerHTML = '';
+    hudCounts.textContent = 'N ' + N + ' · Sc 0 · Si 0';
+    window.BitrateResults.renderSpark('hud-spark', null, BITS, 0);
     return;
   }
   const elapsed = elapsedMsOf(run);
@@ -632,8 +657,8 @@ function renderHud() {
     const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
     hudBps.innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
     hudTime.textContent = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000)) + 's';
-    hudCounts.textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
-    $('hud-spark').innerHTML = '';
+    hudCounts.textContent = 'N ' + (run.n || N) + ' · Sc ' + run.sc + ' · Si ' + run.si;
+    window.BitrateResults.renderSpark('hud-spark', run, BITS, elapsed);
     return;
   }
   // Practice: trailing-60 s window + rolling sparkline (shared helpers), so the
@@ -641,8 +666,8 @@ function renderHud() {
   const tr = window.BitrateResults.trailingBps(run.keylog, BITS, elapsed);
   hudBps.innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
   hudTime.textContent = Math.floor(elapsed / 1000) + 's practice';
-  hudCounts.textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
-  $('hud-spark').innerHTML = window.BitrateResults.sparkHTML(run.keylog, BITS, elapsed);
+  hudCounts.textContent = 'N ' + (run.n || N) + ' · Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
+  window.BitrateResults.renderSpark('hud-spark', run, BITS, elapsed);
 }
 
 setInterval(renderHud, 1000); // >= 1x/sec from page load (spec §1 rule 3)
@@ -659,7 +684,8 @@ function renderResults(opts) {
   else if (opts.server && opts.server.anomaly) note = '<div class="res-note warn">client/server scoring disagreement logged</div>';
 
   $('res-hero').innerHTML =
-    '<div class="res-title">scored run — ' + CONFIG.duration_s + ' s</div>' +
+    '<div class="res-title">stream typing (N ' + N + ' · look ' + CONFIG.lookahead +
+    (CHUNK ? ' · chunk ' + CHUNK : '') + ') · scored run — ' + CONFIG.duration_s + ' s</div>' +
     '<div class="res-bps">' + r.bps.toFixed(2) + ' <span>bits/s</span></div>' +
     '<div class="res-sub">N <b>' + r.n + '</b> · Sc <b>' + r.sc + '</b> · Si <b>' + r.si +
     '</b> · accuracy <b>' + (r.sc + r.si > 0 ? ((100 * r.sc) / (r.sc + r.si)).toFixed(1) : '—') + '%</b></div>' +
@@ -708,6 +734,15 @@ function errorBuzz() {
 const sheetEl = $('sheet');
 let sheetOpen = false;
 
+// One entry point for the sheet — the header's settings button and the score
+// screen's both land here. From the score screen it drops back to
+// practice first: settings are a practice-mode thing (a config change mints a
+// new variant, so it can't happen mid-run).
+async function toggleSheet() {
+  if (state !== 'practice') { await toPractice(); openSheet(); return; }
+  sheetOpen ? closeSheet() : openSheet();
+}
+
 function openSheet() {
   if (state !== 'practice') return;
   sheetOpen = true;
@@ -734,6 +769,7 @@ function syncSheet() {
     'N=' + N + ' · ' + BITS.toFixed(2) + ' bits/selection' +
     (lastConfigHash ? ' · config ' + lastConfigHash.slice(0, 8) : '') +
     ' · changes restart the practice bout';
+  renderCfg();
 }
 
 function segSync(id, val) {
@@ -773,19 +809,11 @@ $('set-lookahead').addEventListener('change', (e) => {
   e.target.blur();
   applyChange((c) => { c.lookahead = Number(e.target.value); });
 });
-$('gear').addEventListener('click', (e) => {
-  e.currentTarget.blur();
-  sheetOpen ? closeSheet() : openSheet();
-});
-
 // ---- corner actions (click = same as the hotkey) ----
 
-modeHelp.addEventListener('click', (e) => {
-  const act = e.target.closest('[data-act]');
-  if (!act) return;
-  if (act.dataset.act === 'arm') armScoredRun();
-  else if (act.dataset.act === 'seed') toPractice();
-});
+// Corner strip in play + the score screen's footer: same buttons, one binder
+// (shared with every other environment — see common/results.js).
+BitrateResults.wireActs({ arm: armScoredRun, seed: toPractice, settings: toggleSheet });
 
 // ---- boot: straight into practice; flush any stranded submissions ----
 
@@ -805,6 +833,9 @@ async function applyCfgParam() {
   } catch { /* ship build or unknown hash: defaults */ }
 }
 
+// The header is an in-flow band whose height moves with content and
+// viewport; publish it so the play area always starts below it.
+window.BitrateResults.trackHeaderHeight();
 loadConfig();
 scheduleFlush(1500);
 applyCfgParam().then(() => startRun(false)).catch(showError);

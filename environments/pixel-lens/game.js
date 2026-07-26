@@ -1,12 +1,13 @@
 'use strict';
 
-/* pixel-lens environment (spec §5 backlog).
+/* pixel-lens / drum-pad environments (spec §5 backlog).
  *
- * A target lights up somewhere on a huge grid; the player mouses to it and
- * clicks. A fisheye loupe rides the cursor so landing inside the cell is
- * comfortable. Deliberately pointer-bound: Fitts's law charges log-distance
- * per acquisition, so this mode exists to show *why* alphabet size cannot
- * rescue a serial pointing device (~4–10 bps expected ceiling).
+ * A target lights up somewhere on a huge grid and the player goes to it. One
+ * implementation, two games, chosen by the page (window.BITRATE_INPUT):
+ * pixel lens is the mouse game, with a fisheye loupe riding the cursor so
+ * landing inside a small cell is comfortable; drum pad is the touch game,
+ * with finger-sized cells and no loupe. Acquisition is serial and distance
+ * costs time, so a big alphabet doesn't buy what it does in typing.
  *
  * Honest N (spec §7): the alphabet is the grid of ~1 cm hitbox cells, not
  * raw pixels — any click inside a cell selects it, so cells are the
@@ -23,46 +24,66 @@ let loupeR = 110;            // lens radius (px, settings-driven)
 // magnification so the steps stay invisible.
 function lensRings() { return Math.round(16 + lensMag * 5); }
 const ARROW_DIST = 320;      // beyond this, show the direction affordance
-const SETTINGS_KEY = 'bitrate_pixel_settings_v1';
+// Per-game settings: the two share an implementation, not a cell menu.
+const SETTINGS_KEY_BY_MODE = { mouse: 'bitrate_pixel_settings_v1', touch: 'bitrate_drum_settings_v1' };
 const DEFAULT_CELL_MM = 5;
 
-// Input mode drives cell-size options, loupe presence, and grid inset.
-//   mouse — fine cells + hover-driven fisheye loupe (the original mode).
-//   touch — finger-sized cells, no loupe: a touchscreen has no hover, so you
-//           tap the target directly (an iPad on the same WiFi, say). Same grid,
-//           same honest-N accounting; the mode is part of the variant identity,
-//           so mouse-vs-touch is a within-environment leaderboard comparison.
+// This file backs two games — same grid, same honest-N accounting, different
+// hands — and the page decides which by setting window.BITRATE_INPUT:
+//   pixel lens (mouse) — fine cells + a hover-driven fisheye loupe.
+//   drum pad  (touch)  — finger-sized cells, no loupe: a touchscreen has no
+//                        hover, so you tap the target directly.
+// The modality is fixed by which page you opened rather than being a setting,
+// so each game has one identity on the leaderboard.
+const INPUT_MODES = { mouse: 'pixel-lens', touch: 'drum-pad' };
 const CELL_OPTS = { mouse: [3, 5, 7.5, 10], touch: [12, 16, 20, 25] };
-const DEFAULT_CELL = { mouse: 5, touch: 20 };
+// Per-mode starting points, not limits — both knobs are in the settings sheet.
+// Touch starts at 16 mm (a fingertip pad is ~15 mm, so it's the smallest cell
+// that still hits first try) with one look-ahead dot, because a tap has no
+// hover to plan under: seeing the next target is what keeps the thumb moving.
+const DEFAULT_CELL = { mouse: 5, touch: 16 };
+const DEFAULT_PREVIEW = { mouse: 0, touch: 1 };
 const CELL_MIN = 2, CELL_MAX = 30;
 const MAX_PREVIEW = 4;
 
-let inputMode = 'mouse';   // 'mouse' | 'touch'
+const inputMode = INPUT_MODES[window.BITRATE_INPUT] ? window.BITRATE_INPUT : 'mouse';
+const ENV_NAME = INPUT_MODES[inputMode];
+const GAME_LABEL = inputMode === 'touch' ? 'drum pad' : 'pixel lens';
 let previewDepth = 0;      // look-ahead: upcoming targets shown as dimmer dots
 let cellMm = DEFAULT_CELL_MM;
 let zoomMode = 'auto'; // 'auto' (25mm apparent) or a fixed multiplier
+let audioOn = true;    // short buzz on a miss
 
 let CONFIG = null, N = 0, BITS = 0, DURATION_MS = 60000;
 let grid = { cols: 0, rows: 0, cell: 19, w: 0, h: 0 };
 let lensMag = 5; // center magnification; falls off to 1 at the rim
 
-function loadSettings() {
+// A device with only a coarse pointer has no hover, so pixel lens's 5 mm cells
+// and fisheye loupe are unplayable on it — that player wants drum pad.
+function wrongDeviceForMode() {
   try {
-    const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    if (s.input === 'mouse' || s.input === 'touch') inputMode = s.input;
-    if (typeof s.cell_mm === 'number' && s.cell_mm >= CELL_MIN && s.cell_mm <= CELL_MAX) cellMm = s.cell_mm;
-    if (s.zoom === 'auto' || (typeof s.zoom === 'number' && s.zoom >= 2 && s.zoom <= 8)) zoomMode = s.zoom;
-    if (typeof s.lens_r === 'number' && s.lens_r >= 60 && s.lens_r <= 180) loupeR = s.lens_r;
-    if (typeof s.preview === 'number' && s.preview >= 0 && s.preview <= MAX_PREVIEW) previewDepth = Math.round(s.preview);
-  } catch { /* defaults */ }
+    const coarse = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
+    return inputMode === 'mouse' && coarse;
+  } catch { return false; }
+}
+
+function loadSettings() {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY_BY_MODE[inputMode]) || '{}'); } catch { /* defaults */ }
+  if (typeof s.cell_mm === 'number' && s.cell_mm >= CELL_MIN && s.cell_mm <= CELL_MAX) cellMm = s.cell_mm;
+  if (s.zoom === 'auto' || (typeof s.zoom === 'number' && s.zoom >= 2 && s.zoom <= 8)) zoomMode = s.zoom;
+  if (typeof s.lens_r === 'number' && s.lens_r >= 60 && s.lens_r <= 180) loupeR = s.lens_r;
+  if (typeof s.audio === 'boolean') audioOn = s.audio;
+  previewDepth = typeof s.preview === 'number' && s.preview >= 0 && s.preview <= MAX_PREVIEW
+    ? Math.round(s.preview) : DEFAULT_PREVIEW[inputMode];
   // Snap the cell size to a valid option for the mode (options differ by mode).
   if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
 }
 
 function saveSettings() {
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      input: inputMode, cell_mm: cellMm, zoom: zoomMode, lens_r: loupeR, preview: previewDepth,
+    localStorage.setItem(SETTINGS_KEY_BY_MODE[inputMode], JSON.stringify({
+      cell_mm: cellMm, zoom: zoomMode, lens_r: loupeR, preview: previewDepth, audio: audioOn,
     }));
   } catch { /* fine */ }
 }
@@ -124,11 +145,14 @@ let mouse = { x: -1000, y: -1000, inField: false };
 function buildConfig() {
   const loupeOn = inputMode === 'mouse';
   const cell = Math.max(6, Math.round(cellMm * PX_PER_MM));
+  // Drives the touch-mode space reclaim in CSS; set before measuring the field.
+  document.body.classList.toggle('touch', !loupeOn);
   const r = fieldEl.getBoundingClientRect();
   // Inset the grid from the field edges. Mouse mode keeps a lens-radius margin
-  // so the loupe is never buried more than ~40% at a boundary target; touch
-  // has no loupe, so a half-cell finger margin is enough and the grid fills more.
-  const pad = loupeOn ? Math.round(loupeR * 0.6) : Math.round(cell * 0.5);
+  // so the loupe is never buried more than ~40% at a boundary target. Touch has
+  // no loupe at all, so that margin is dead space: a thin edge gap is all a
+  // finger needs, and every pixel it gives back becomes more cells — more N.
+  const pad = loupeOn ? Math.round(loupeR * 0.6) : 4;
   const cols = Math.max(2, Math.floor((r.width - 2 * pad) / cell));
   const rows = Math.max(2, Math.floor((r.height - 2 * pad) / cell));
   const ox = Math.round((r.width - cols * cell) / 2);
@@ -152,7 +176,7 @@ function buildConfig() {
   N = cols * rows; // no correction key in this environment
   BITS = Math.log2(N - 1);
   CONFIG = {
-    environment: 'pixel-lens',
+    environment: ENV_NAME,
     alphabet_size: N,
     grid_cols: cols,
     grid_rows: rows,
@@ -161,6 +185,7 @@ function buildConfig() {
     input: inputMode,
     loupe: loupeOn ? 'on' : 'off',
     preview: previewDepth,
+    audio_feedback: audioOn,
     loupe_r_px: loupeOn ? loupeR : 0,
     loupe_mag: loupeOn ? Math.round(lensMag * 100) / 100 : 0,
     loupe_zoom_mode: loupeOn ? String(zoomMode) : 'off',
@@ -174,10 +199,18 @@ function buildConfig() {
     font_stack: 'system-mono',
   };
   DURATION_MS = CONFIG.duration_s * 1000;
+  renderCfg();
+}
+
+// The middle of the header: what this variant is set to, with the settings
+// button under it — the label and the way to change it are one object. The
+// grid, N and bits/selection are the honest accounting (spec §7, §5
+// pixel-lens: cells are the distinguishable selections, not raw pixels).
+function renderCfg() {
   $('res-info').innerHTML =
     '<b>' + CONFIG.viewport_w + '×' + CONFIG.viewport_h + '</b> px · ' +
-    '<b>' + cols + '×' + rows + '</b> cells of ' + cellMm + ' mm' +
-    (loupeOn ? ' (~' + Math.round(cellMm * lensMag) + ' mm in lens)' : ' · touch') +
+    '<b>' + grid.cols + '×' + grid.rows + '</b> cells of ' + cellMm + ' mm' +
+    (inputMode === 'mouse' ? ' (~' + Math.round(cellMm * lensMag) + ' mm in lens)' : ' · touch') +
     ' · N=<b>' + N + '</b> · <b>' + BITS.toFixed(2) + '</b> bits/selection' +
     (previewDepth ? ' · look-ahead <b>' + previewDepth + '</b>' : '');
 }
@@ -234,31 +267,40 @@ async function startRun(scored) {
   renderHud();
 }
 
+// What the settings sheet is currently set to, short enough for the corner.
+function configLabel() {
+  return grid.cols + '×' + grid.rows + ' cells · ' + cellMm + ' mm' +
+    (previewDepth ? ' · look ' + previewDepth : '');
+}
+
+// The practice corner: the two run controls. What the game is set to, and
+// the button that changes it, live in the header's middle zone.
+function renderPracticeHelp() {
+  modeHelp.innerHTML =
+    '<button type="button" class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</button>' +
+    '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</button>';
+}
+
 function setState(next) {
   state = next;
   document.body.classList.toggle('armed', next === 'armed');
   overlay.hidden = next !== 'error';
   resultsEl.hidden = next !== 'done';
   fieldEl.hidden = next === 'done';
-  $('hud').hidden = next === 'done';
-  $('corner').hidden = next === 'done';
-  $('res-info').hidden = next === 'done';
-  $('gear').hidden = next !== 'practice';
+  $('topbar').hidden = next === 'done';
   if (next !== 'practice') $('hud-spark').innerHTML = '';
   if (next === 'done') { hidePreviews(); targetEl.hidden = true; }
   if (next !== 'practice' && sheetOpen) closeSheet();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
     modeBanner.className = 'mode-practice';
-    modeHelp.innerHTML =
-      '<span class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</span>' +
-      '<span class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</span>';
+    renderPracticeHelp();
   } else if (next === 'armed') {
     modeBanner.textContent = 'armed';
     modeBanner.className = 'mode-armed';
     modeHelp.innerHTML =
       '<span class="act armed-note">first click starts the 60 s clock</span>' +
-      '<span class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</span>';
+      '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</button>';
   } else if (next === 'scored') {
     modeBanner.textContent = 'scored run';
     modeBanner.className = 'mode-scored';
@@ -304,7 +346,7 @@ function ensurePreviewPool(n) {
     const el = document.createElement('div');
     el.className = 'preview-dot';
     el.hidden = true;
-    el.innerHTML = '<div class="pring2"></div><div class="pring"></div><div class="pdot"></div>';
+    el.innerHTML = '<div class="pcue"></div><div class="pring2"></div><div class="pring"></div><div class="pdot"></div>';
     previewLayer.appendChild(el);
     previewEls.push(el);
   }
@@ -324,6 +366,16 @@ function placePreviews() {
     // Nearer previews a touch stronger; all dimmer than the solid live cell.
     el.style.opacity = String(Math.max(0.28, 0.72 - k * 0.18));
     el.hidden = false;
+    // The next target gets one collapsing ring — the live cell's bull's-eye cue
+    // at a whisper: it says "you're going here after this" without competing
+    // with the cue that says "go here now". Only k === 0; the rest stay static.
+    if (k === 0) {
+      el.classList.remove('cue');
+      void el.offsetWidth; // reflow so the animation restarts on each advance
+      el.classList.add('cue');
+    } else {
+      el.classList.remove('cue');
+    }
   }
 }
 
@@ -369,6 +421,7 @@ fieldEl.addEventListener('pointerdown', (e) => {
   // point; mouse keeps the loupe-rim flash on a miss.
   if (inputMode === 'touch') tapFlash(x, y, verdict);
   else if (!verdict) missFlash();
+  if (!verdict) errorBuzz();
 
   run.keylog.push({
     i: run.keylog.length,
@@ -401,6 +454,30 @@ fieldEl.addEventListener('pointerup', (e) => {
 function missFlash() {
   loupeEl.style.borderColor = 'var(--err)';
   setTimeout(() => { loupeEl.style.borderColor = ''; }, 160);
+}
+
+// ---- audio feedback: WebAudio only, no files (spec §4.1) ----
+// The same short low square burst stream-typing plays on a wrong key. Created
+// lazily inside the pointer handler, which is the user gesture browsers want.
+
+let audioCtx = null;
+
+function errorBuzz() {
+  if (!audioOn) return;
+  try {
+    audioCtx = audioCtx || new AudioContext();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t0 = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'square';
+    o.frequency.value = 110;
+    g.gain.setValueAtTime(0.05, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t0);
+    o.stop(t0 + 0.09);
+  } catch { /* audio is never load-bearing */ }
 }
 
 // A ring that pops at the tap point — the touch analog of the loupe-rim flash.
@@ -608,6 +685,15 @@ document.addEventListener('keydown', (e) => {
 const sheetEl = $('sheet');
 let sheetOpen = false;
 
+// One entry point for the sheet — the header's settings button and the score
+// screen's both land here. From the score screen it drops back to
+// practice first: settings are a practice-mode thing (a config change mints a
+// new variant, so it can't happen mid-run).
+async function toggleSheet() {
+  if (state !== 'practice') { await toPractice(); openSheet(); return; }
+  sheetOpen ? closeSheet() : openSheet();
+}
+
 function openSheet() {
   if (state !== 'practice') return;
   sheetOpen = true;
@@ -637,11 +723,11 @@ function segOn(id, pred) {
 
 function syncSheet() {
   const loupeOn = inputMode === 'mouse';
-  segOn('seg-input', (b) => b.dataset.v === inputMode);
   segOn('seg-cell', (b) => Number(b.dataset.v) === cellMm);
   segOn('seg-zoom', (b) => b.dataset.v === String(zoomMode));
   segOn('seg-lens', (b) => Number(b.dataset.v) === loupeR);
   segOn('seg-preview', (b) => Number(b.dataset.v) === previewDepth);
+  segOn('seg-audio', (b) => (b.dataset.v === 'on') === audioOn);
   $('row-zoom').hidden = !loupeOn; // lens controls are meaningless in touch mode
   $('row-lens').hidden = !loupeOn;
   $('sheet-info').textContent =
@@ -651,6 +737,7 @@ function syncSheet() {
       ' · ~' + Math.round(cellMm * lensMag) + ' mm in lens' : ' · touch, no lens') +
     (previewDepth ? ' · look-ahead ' + previewDepth : '') +
     ' · changes restart the bout';
+  renderCfg();
 }
 
 function segApply(mut) {
@@ -660,17 +747,6 @@ function segApply(mut) {
   syncSheet();
   toPractice();
 }
-
-$('seg-input').addEventListener('click', (e) => {
-  const b = e.target.closest('button');
-  if (!b || b.dataset.v === inputMode) return;
-  b.blur();
-  segApply(() => {
-    inputMode = b.dataset.v;
-    if (!CELL_OPTS[inputMode].includes(cellMm)) cellMm = DEFAULT_CELL[inputMode];
-    renderCellSeg();
-  });
-});
 
 $('seg-cell').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -684,6 +760,13 @@ $('seg-preview').addEventListener('click', (e) => {
   if (!b) return;
   b.blur();
   segApply(() => { previewDepth = Number(b.dataset.v); });
+});
+
+$('seg-audio').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  segApply(() => { audioOn = b.dataset.v === 'on'; });
 });
 
 $('seg-zoom').addEventListener('click', (e) => {
@@ -700,17 +783,9 @@ $('seg-lens').addEventListener('click', (e) => {
   segApply(() => { loupeR = Number(b.dataset.v); });
 });
 
-$('gear').addEventListener('click', (e) => {
-  e.currentTarget.blur();
-  sheetOpen ? closeSheet() : openSheet();
-});
-
-modeHelp.addEventListener('click', (e) => {
-  const act = e.target.closest('[data-act]');
-  if (!act) return;
-  if (act.dataset.act === 'arm') armScoredRun();
-  else if (act.dataset.act === 'seed') toPractice();
-});
+// Corner strip in play + the score screen's footer: same buttons, one binder
+// (shared with every other environment — see common/results.js).
+BitrateResults.wireActs({ arm: armScoredRun, seed: toPractice, settings: toggleSheet });
 
 // ---- mode transitions ----
 
@@ -803,10 +878,17 @@ function onFocusLost() {
 }
 
 let resizeTimer = null;
-window.addEventListener('resize', () => {
+function scheduleResize() {
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(onResize, 250);
-});
+}
+window.addEventListener('resize', scheduleResize);
+
+// The band can also change height on its own — the config line rewrapping, the
+// run controls repainting — which moves the field's top edge just as a window
+// resize does. Here that also moves N, since the alphabet is the grid that
+// fits in the space left over, so it takes the same path.
+window.BitrateResults.trackHeaderHeight(() => scheduleResize());
 
 function onResize() {
   resizeTimer = null;
@@ -823,11 +905,14 @@ function onResize() {
     abortScoredRun('resized');
     return;
   }
-  if (run && run.started && !run.submitted) submitRun(false).catch(() => {});
+  const played = !!(run && run.started);
+  if (played && !run.submitted) submitRun(false).catch(() => {});
   run = null;
   buildConfig();
   startRun(state === 'armed').catch(showError);
-  showNotice('viewport changed — N recalculated', '', 3000);
+  // Only worth saying when something was actually lost: at boot the bar settles
+  // once as the corner strip paints, and nobody has played anything yet.
+  if (played) showNotice('viewport changed — N recalculated', '', 3000);
 }
 
 // ---- scoring (client mirror; server is authoritative) ----
@@ -924,8 +1009,8 @@ function renderHud() {
   if (!run || !run.started) {
     $('hud-bps').innerHTML = '0.0 <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = state === 'armed' ? CONFIG.duration_s + 's' : '';
-    $('hud-counts').textContent = '';
-    spark.innerHTML = '';
+    $('hud-counts').textContent = 'N ' + N + ' · Sc 0 · Si 0';
+    window.BitrateResults.renderSpark('hud-spark', null, BITS, 0);
     return;
   }
   const nowT = elapsedMsOf(run);
@@ -934,8 +1019,8 @@ function renderHud() {
     const cs = scoreWith(run, Math.max(nowT, 1000) / 1000);
     $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = Math.max(0, Math.ceil((DURATION_MS - nowT) / 1000)) + 's';
-    $('hud-counts').textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
-    spark.innerHTML = '';
+    $('hud-counts').textContent = 'N ' + (run.n || N) + ' · Sc ' + run.sc + ' · Si ' + run.si;
+    window.BitrateResults.renderSpark('hud-spark', run, BITS, elapsed);
     return;
   }
   // Practice: trailing-60 s window, so the figure reflects current skill
@@ -943,8 +1028,8 @@ function renderHud() {
   const tr = R.trailingBps(run.keylog, run.bits, nowT);
   $('hud-bps').innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
   $('hud-time').textContent = Math.floor(nowT / 1000) + 's practice';
-  $('hud-counts').textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
-  spark.innerHTML = R.sparkHTML(run.keylog, run.bits, nowT);
+  $('hud-counts').textContent = 'N ' + (run.n || N) + ' · Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
+  window.BitrateResults.renderSpark('hud-spark', run, BITS, nowT);
 }
 
 setInterval(renderHud, 1000);
@@ -964,7 +1049,7 @@ function renderResults(opts) {
   else if (opts.server && opts.server.anomaly) note = '<div class="res-note warn">client/server scoring disagreement logged</div>';
 
   $('res-hero').innerHTML =
-    '<div class="res-title">pixel lens · scored run — ' + CONFIG.duration_s + ' s</div>' +
+    '<div class="res-title">' + GAME_LABEL + ' · scored run — ' + CONFIG.duration_s + ' s</div>' +
     '<div class="res-bps">' + bps.toFixed(2) + ' <span>bits/s</span></div>' +
     '<div class="res-sub">N <b>' + n + '</b> (' + grid.cols + '×' + grid.rows + ' cells)' +
     ' · Sc <b>' + sc + '</b> · Si <b>' + si + '</b>' +
@@ -996,7 +1081,7 @@ async function applyCfgParam() {
   try {
     const data = await (await fetch('/api/variants')).json();
     const v = (data.variants || []).find((x) => x.config_hash === h);
-    if (!v || v.environment !== 'pixel-lens') return;
+    if (!v || v.environment !== ENV_NAME) return;
     const c = typeof v.config === 'string' ? JSON.parse(v.config) : v.config;
     if (c.input === 'mouse' || c.input === 'touch') inputMode = c.input;
     if (typeof c.preview === 'number' && c.preview >= 0 && c.preview <= MAX_PREVIEW) previewDepth = Math.round(c.preview);
@@ -1045,3 +1130,9 @@ renderCellSeg();
 buildConfig();
 scheduleFlush(1500);
 applyCfgParam().then(() => startRun(false)).catch(showError);
+
+// Opened the mouse game on a touchscreen: the loupe needs a hover this device
+// doesn't have. Point at the game that fits rather than letting them fight it.
+if (wrongDeviceForMode()) {
+  showNotice('no mouse here — <a href="/env/drum-pad/">drum pad</a> is the touch version of this grid', '', 12000);
+}

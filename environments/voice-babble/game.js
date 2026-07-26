@@ -87,6 +87,7 @@ function buildConfig() {
     font_stack: 'system-mono',
   };
   DURATION_MS = CONFIG.duration_s * 1000;
+  renderCfg();
 }
 
 // ---- templates ----
@@ -569,6 +570,27 @@ async function startRun(scored) {
   renderHud();
 }
 
+// What the settings sheet is currently set to, short enough for the corner.
+function configLabel() {
+  return SET.label;
+}
+
+// The middle of the header: what this variant is set to, with the settings
+// button under it — the label and the way to change it are one object. The
+// N and bits/selection are the honest accounting (spec §7), always on screen.
+function renderCfg() {
+  $('res-info').innerHTML =
+    configLabel() + ' · N <b>' + N + '</b> · <b>' + BITS.toFixed(2) + '</b> bits/selection';
+}
+
+// The practice corner: the two run controls. What the game is set to, and
+// the button that changes it, live in the header's middle zone.
+function renderPracticeHelp() {
+  modeHelp.innerHTML =
+    '<button type="button" class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</button>' +
+    '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</button>';
+}
+
 function setState(next) {
   state = next;
   document.body.classList.toggle('armed', next === 'armed');
@@ -576,22 +598,18 @@ function setState(next) {
   resultsEl.hidden = next !== 'done';
   $('stage').hidden = next === 'done' || next === 'calib';
   $('calib').hidden = next !== 'calib';
-  $('hud').hidden = next === 'done' || next === 'calib';
-  $('corner').hidden = next === 'done' || next === 'calib';
-  $('gear').hidden = next !== 'practice';
+  $('topbar').hidden = next === 'done' || next === 'calib';
   if (next !== 'practice' && sheetOpen) closeSheet();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
     modeBanner.className = 'mode-practice';
-    modeHelp.innerHTML =
-      '<span class="act click" data-act="arm"><kbd>Enter</kbd>arm scored run</span>' +
-      '<span class="act click" data-act="seed"><kbd>Esc</kbd>new practice seed</span>';
+    renderPracticeHelp();
   } else if (next === 'armed') {
     modeBanner.textContent = 'armed';
     modeBanner.className = 'mode-armed';
     modeHelp.innerHTML =
       '<span class="act armed-note">your first sound starts the 60 s clock</span>' +
-      '<span class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</span>';
+      '<button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</button>';
   } else if (next === 'scored') {
     modeBanner.textContent = 'scored run';
     modeBanner.className = 'mode-scored';
@@ -774,12 +792,11 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-modeHelp.addEventListener('click', (e) => {
+// Corner strip in play + the score screen's footer: same buttons, one binder
+// (shared with every other environment — see common/results.js). The click is
+// also the user gesture that unsuspends audio.
+BitrateResults.wireActs({ arm: armScoredRun, seed: toPractice, settings: toggleSheet }, () => {
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-  const act = e.target.closest('[data-act]');
-  if (!act) return;
-  if (act.dataset.act === 'arm') armScoredRun();
-  else if (act.dataset.act === 'seed') toPractice();
 });
 
 // ---- mode transitions (house pattern) ----
@@ -945,8 +962,8 @@ function renderHud() {
   if (!run || !run.started) {
     $('hud-bps').innerHTML = '0.0 <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = state === 'armed' ? CONFIG.duration_s + 's' : '';
-    $('hud-counts').textContent = '';
-    $('hud-spark').innerHTML = '';
+    $('hud-counts').textContent = 'N ' + N + ' · Sc 0 · Si 0';
+    window.BitrateResults.renderSpark('hud-spark', null, BITS, 0);
     return;
   }
   const elapsed = elapsedMsOf(run);
@@ -955,16 +972,16 @@ function renderHud() {
     const cs = scoreWith(run, Math.max(elapsed, 1000) / 1000);
     $('hud-bps').innerHTML = cs.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = Math.max(0, Math.ceil((DURATION_MS - elapsed) / 1000)) + 's';
-    $('hud-counts').textContent = 'Sc ' + run.sc + ' · Si ' + run.si;
-    $('hud-spark').innerHTML = '';
+    $('hud-counts').textContent = 'N ' + (run.n || N) + ' · Sc ' + run.sc + ' · Si ' + run.si;
+    window.BitrateResults.renderSpark('hud-spark', run, BITS, elapsed);
     return;
   }
   // Practice: trailing-60 s window + rolling sparkline (shared helpers).
   const tr = window.BitrateResults.trailingBps(run.keylog, BITS, elapsed);
   $('hud-bps').innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
   $('hud-time').textContent = Math.floor(elapsed / 1000) + 's practice';
-  $('hud-counts').textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
-  $('hud-spark').innerHTML = window.BitrateResults.sparkHTML(run.keylog, BITS, elapsed);
+  $('hud-counts').textContent = 'N ' + (run.n || N) + ' · Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
+  window.BitrateResults.renderSpark('hud-spark', run, BITS, elapsed);
 }
 
 setInterval(renderHud, 1000);
@@ -1011,6 +1028,15 @@ function showError(err) {
 const sheetEl = $('sheet');
 let sheetOpen = false;
 
+// One entry point for the sheet — the header's settings button and the score
+// screen's both land here. From the score screen it drops back to
+// practice first: settings are a practice-mode thing (a config change mints a
+// new variant, so it can't happen mid-run).
+async function toggleSheet() {
+  if (state !== 'practice') { await toPractice(); openSheet(); return; }
+  sheetOpen ? closeSheet() : openSheet();
+}
+
 function openSheet() {
   if (state !== 'practice') return;
   sheetOpen = true;
@@ -1040,6 +1066,7 @@ function syncSheet() {
   $('sheet-info').textContent =
     'N=' + N + ' · ' + BITS.toFixed(2) + ' bits/selection · ' + (SET.note || '') +
     ' · changes restart the bout';
+  renderCfg();
 }
 
 function selectSet(name) {
@@ -1104,12 +1131,6 @@ $('recalibrate').addEventListener('click', () => {
   startCalibration();
 });
 
-$('gear').addEventListener('click', (e) => {
-  e.currentTarget.blur();
-  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
-  sheetOpen ? closeSheet() : openSheet();
-});
-
 // ---- debug hook: lets the synthetic harness drive the recognizer path
 // without a microphone (spec §3a — correctness only, never ranking; runs
 // from headless browsers are excluded from the leaderboard anyway). ----
@@ -1144,6 +1165,9 @@ window.voiceDebug = {
 // ---- boot ----
 
 loadSettings();
+// The header is an in-flow band whose height moves with content and
+// viewport; publish it so the play area always starts below it.
+window.BitrateResults.trackHeaderHeight();
 buildConfig();
 scheduleFlush(1500);
 templates = loadTemplates();

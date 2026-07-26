@@ -9,21 +9,28 @@
 </head>
 <body>
   <header>
-    <h1>bit-rate</h1>
-    <div class="tagline">maximum bits per second through a human — every mode honestly scored, failures included</div>
+    <h1>bit-rate games</h1>
   </header>
 
   <section id="tiles"></section>
+
+  <section id="board-section">
+    <h2>leaderboard <span id="board-note" class="note"></span></h2>
+    <div id="board-tabs"></div>
+    <div id="board"></div>
+  </section>
 
   <section id="progress-section" hidden>
     <h2>your progress</h2>
     <div id="progress"></div>
   </section>
 
-  <section id="board-section">
-    <h2>leaderboard <span id="board-note" class="note"></span></h2>
-    <div id="board-tabs"></div>
-    <div id="board"></div>
+  <!-- The graveyard: built, played, and beaten by something above. Kept
+       because a mode that didn't work is a result too — but out of the
+       leaderboard, which ranks the games still in the running. -->
+  <section id="graveyard-section" hidden>
+    <h2>graveyard <span class="note">— tried, kept for the record, out of the running</span></h2>
+    <div id="graveyard"></div>
   </section>
 
 <script src="common/results.js"></script>

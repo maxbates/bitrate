@@ -1,21 +1,84 @@
 /* Shared post-run results view + chart styles (spec §4.3/§4.4:
    one renderer, every environment). Pages define the color vars. */
 
-/* ---- live practice sparkline (every environment's header) ----
-   Injected into a `.hud-spark-host` element; empty when there's no data yet,
-   so :empty collapses it. Var fallbacks keep it correct even if a page's
-   theme omits one. Blue line so it never collides with target colors. */
-.hud-spark-host:empty { display: none; }
-/* Sits just to the LEFT of the HUD text (which is right-anchored), so it stays
-   in the top header strip and never grows down into the play area. #hud is a
-   positioned ancestor in every environment, so right:100% anchors to it. */
-.hud-spark-host:not(:empty) {
-  position: absolute;
-  top: 0;
-  right: 100%;
-  margin-right: 12px;
+/* ---- the header band (every environment, same three zones) ----
+   left   #corner  — mode banner + the run controls (Enter / Esc)
+   middle #cfg     — what this variant is set to, with the settings button
+                     under it: the config is the label, the button is the way
+                     to change it
+   right  #hud     — the live figures the assignment requires (running bits/s
+                     at >=1 Hz, plus N / Sc / Si) and the pace graph
+
+   It's an in-flow band, not a floating overlay: the play field starts below it
+   (`top: var(--topbar-h)`), so header content can never draw over the game.
+   JS publishes --topbar-h from the measured height, because the band reflows
+   with content and viewport (spec §4.3.1). */
+#topbar {
+  position: relative;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    "banner cfg hud"
+    "help   cfg hud";
+  align-items: center;
+  column-gap: 20px;
+  row-gap: 7px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--faint);
+}
+#mode-banner { grid-area: banner; justify-self: start; align-self: end; }
+#mode-help { grid-area: help; align-self: start; }
+#cfg { grid-area: cfg; }
+#hud { grid-area: hud; }
+
+/* Middle zone: the honest accounting (spec §7) and the way to change it. */
+#cfg {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+}
+#res-info {
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+#res-info b { color: var(--fg); font-weight: normal; }
+#cfg .act { font-size: 12.5px; padding: 6px 11px; }
+
+#hud {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--dim);
+  font-size: 14px;
+  line-height: 1.45;
+  text-align: right;
+}
+/* Fixed width, tabular figures: Sc/Si grow by a digit mid-run and the band
+   must not move under the player when they do. Sized for the widest line any
+   environment produces (a four-digit N plus three-digit counts). */
+#hud-metrics {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  min-width: 27ch;
+}
+#hud-bps { font-size: 20px; color: var(--fg); }
+.hud-unit { font-size: 12px; color: var(--dim); }
+
+/* ---- live pace graph (every environment's header) ----
+   Blue line so it never collides with target colors. Rendered from page load
+   rather than on first input, so the band never changes height under the
+   player. Var fallbacks keep it correct even if a page's theme omits one. */
+.hud-spark-host {
+  flex: 0 0 auto;
   padding: 5px 7px 3px;
-  background: rgba(16, 18, 22, .9);
   border: 1px solid var(--faint, #2a2e36);
   border-radius: 7px;
   text-align: right;
@@ -33,6 +96,121 @@
   vector-effect: non-scaling-stroke;
 }
 
+
+/* ---- action controls: one control family, every environment ----
+   Both places a run can be started or ended use the same markup —
+   <button type="button" class="act click" data-act="…"><kbd>Key</kbd>label</button>
+   — the corner #mode-help during play, #res-footer on the score screen. The
+   hotkey stays the fast path; the chip is a real button so touch devices (no
+   keyboard) can do everything a keyboard can. Styled here rather than in each
+   game.css — this file loads after every game.css, so the eight environments
+   get the same shape, chip, hover and tap target and can't drift apart. */
+.act {
+  display: inline-flex;
+  align-items: center;
+  font: 13px/1.4 var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--dim);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 5px 9px;
+  text-align: left;
+}
+/* Non-clickable lines (status notes) sit flush with the banner above them. */
+.act:not(.click) { padding-left: 0; padding-right: 0; }
+.armed-note { color: var(--accent); }
+.act.click {
+  cursor: pointer;
+  border-color: var(--faint);
+  background: rgba(255, 255, 255, .025);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.act.click:hover { color: var(--fg); border-color: var(--dim); }
+.act.click:active { background: rgba(255, 255, 255, .07); }
+.act.click:focus-visible { outline: 2px solid var(--caret); outline-offset: 2px; }
+/* <kbd> = the hotkey that does the same thing; .chip = a glyph for controls
+   that have no hotkey (settings). Same box either way — the chip is what makes
+   a line read as a control rather than a caption. */
+.act kbd,
+.act .chip {
+  flex: none;
+  color: var(--fg);
+  border: 1px solid var(--faint);
+  border-radius: 3px;
+  padding: 0 5px;
+  margin-right: 7px;
+  font: inherit;
+  font-size: .92em;
+}
+
+/* In play: stacked under the mode banner, left-aligned, compact. */
+#mode-help {
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  max-width: min(64vw, 360px);
+}
+
+/* The mode banner: the unmistakable practice/armed/scored affordance the
+   assignment asks for (a scored run must never start by accident). Shared so
+   the same chip means the same thing in all eight environments. */
+#mode-banner {
+  display: inline-block;
+  font-size: 13px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+.mode-practice { color: var(--dim); border: 1px solid var(--faint); }
+.mode-practice-live { color: var(--live); border: 1px solid var(--live); }
+.mode-armed { color: #111; background: var(--accent); }
+.mode-scored { color: var(--err); border: 1px solid var(--err); }
+.mode-scored::before { content: "● "; }
+
+/* ---- narrow viewports (a phone in portrait) ----
+   The band has to stay small: the play field is what the screen is for. Keep
+   the mode banner, the run controls, the settings button, and the figures the
+   assignment requires; drop the accounting line and the graph, both of which
+   are on the score screen anyway (spec §4.3.1). The hotkey chips go too —
+   there's no keyboard on a phone, so the buttons speak for themselves. */
+@media (max-width: 640px) {
+  #topbar {
+    grid-template-columns: auto auto 1fr;
+    grid-template-areas:
+      "banner cfg  hud"
+      "help   help help";
+    align-items: center;
+    column-gap: 10px;
+    row-gap: 6px;
+    padding: 8px 12px;
+  }
+  #mode-banner { align-self: center; }
+  #mode-help { align-self: center; }
+  #cfg { justify-self: start; }
+  #hud { justify-self: end; }
+  #res-info { display: none; }
+  #cfg .off-brief-banner { display: none; }
+  .hud-spark-host { display: none; }
+  #mode-help {
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-top: 0;
+    gap: 6px;
+    max-width: none;
+  }
+  #mode-help .act kbd { display: none; }
+  #mode-banner { font-size: 11px; padding: 3px 7px; letter-spacing: .08em; }
+  #cfg .act { padding: 6px 9px; }
+  #cfg .act .lbl { display: none; }  /* the gear alone is the button */
+  #cfg .act .chip { margin-right: 0; }
+  #hud { gap: 0; }
+  #hud-bps { font-size: 16px; }
+  #hud-metrics { font-size: 11.5px; line-height: 1.35; min-width: 24ch; }
+}
 
 #results {
   position: absolute;
@@ -109,8 +287,19 @@ svg .data-bar { fill: var(--caret); }
 svg .err-tick { fill: var(--err); }
 svg .marker-line { stroke: var(--dim); stroke-width: 1; }
 
-#res-footer { color: var(--dim); font-size: 13px; margin-top: 2rem; }
-#res-footer b { color: var(--fg); font-weight: normal; }
+/* Score screen: the same two controls, centered under the charts. Roomier
+   than the in-play corner — nothing is competing for the space here, and a
+   ~44px target is what a thumb wants. */
+#res-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 2rem;
+  color: var(--dim);
+  font-size: 13px;
+}
+#res-footer .act { font-size: 14px; padding: 11px 16px; }
 
 
 /* Consent banner (spec §6) — fixed bottom strip, shown on the public deploy only. */

@@ -8,22 +8,30 @@
 <link rel="stylesheet" href="../common/results.css">
 </head>
 <body>
-  <!-- Peripheral HUD: corner, low contrast, exactly 1 Hz (spec §7). -->
-  <div id="hud" aria-live="off">
-    <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
-    <div id="hud-time"></div>
-    <div id="hud-counts"></div>
-    <div id="hud-spark" class="hud-spark-host"></div>
-  </div>
-
+  <!-- Header band (spec §4.3.1): mode + run controls on the left, what this
+       variant is set to in the middle (with the settings button under it), and
+       on the right the figures the assignment requires — running bits/s at
+       >=1 Hz plus N / Sc / Si (rules 3 and 4) — with the pace graph. It is an
+       in-flow band: the play field starts below it, never under it. -->
+  <header id="topbar">
+    <div id="mode-banner" class="mode-practice">practice</div>
+    <div id="mode-help"></div>
+    <div id="cfg">
+      <div id="res-info"></div>
+      <button type="button" class="act click" data-act="settings"><span class="chip">⚙</span><span class="lbl">settings</span></button>
+    </div>
+    <div id="hud" aria-live="off">
+      <div id="hud-spark" class="hud-spark-host"></div>
+      <div id="hud-metrics">
+        <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
+        <div id="hud-time"></div>
+        <div id="hud-counts"></div>
+      </div>
+    </div>
+  </header>
   <!-- Mode + controls live together in one corner cluster: the chip says
        which mode is active (spec §5: unmistakable, not shouty), the lines
        under it are the actions — clickable, with their hotkeys. -->
-  <div id="corner">
-    <div id="mode-banner" class="mode-practice">practice</div>
-    <div id="mode-help"></div>
-  </div>
-
   <div id="caps-warning" hidden>⇪ Caps Lock is on — input is case-folded, but turn it off</div>
   <div id="ime-warning" hidden>An IME composition was detected — scored runs need direct key input</div>
 
@@ -53,7 +61,11 @@
         <div id="chart-iki"></div>
       </figure>
     </div>
-    <div id="res-footer">press <b>Enter</b> for a new scored run · <b>Esc</b> for practice</div>
+    <div id="res-footer">
+      <button type="button" class="act click" data-act="arm"><kbd>Enter</kbd>new scored run</button>
+      <button type="button" class="act click" data-act="seed"><kbd>Esc</kbd>back to practice</button>
+      <button type="button" class="act click" data-act="settings"><span class="chip">⚙</span>settings</button>
+    </div>
   </section>
 
   <!-- Overlay card: error states only. -->
@@ -65,7 +77,6 @@
        Every change restarts the practice bout under a new content-addressed
        config; scored runs report whatever config is active. -->
   <a id="gallery-link" href="/env/" title="back to all games">← gallery</a>
-  <button id="gear" title="settings">⚙ settings</button>
   <div id="sheet">
     <div class="sh-row">
       <span class="sh-label">alphabet</span>
