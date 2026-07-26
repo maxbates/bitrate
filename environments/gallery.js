@@ -82,7 +82,12 @@ const ENV_META = {
 const FEATURED = ['drum-pad', 'pixel-lens', 'stream-typing', 'voice-babble'];
 // The graveyard: built and played, but beaten by something above or ruled out.
 // Shown at the bottom of the page and kept out of the leaderboard.
-const GRAVEYARD = ['lane-tap', 'beat-hands', 'twin-stick', 'parabola-fall', 'word-typing'];
+//
+// beat-hands is deliberately absent — no card anywhere. The game still exists
+// and /env/beat-hands/ still plays; it just isn't offered from this page. Its
+// runs stay in the history and the progress strips, and ENV_META keeps its
+// entry so anything that does link to it still gets a name.
+const GRAVEYARD = ['lane-tap', 'twin-stick', 'parabola-fall', 'word-typing'];
 // Deleted outright; their historical runs are filtered from every view.
 const HIDDEN_ENVS = new Set(['speech-words']);
 

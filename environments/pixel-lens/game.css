@@ -210,6 +210,100 @@ body.armed #field { cursor: none; }
   /* rotated via transform in JS; ▸ sits at the ring edge */
 }
 
+/* ---- wrong-device banner: drum pad on a machine with no touchscreen ----
+   Standing, not dismissable: practice works with a mouse, but the scored run
+   won't, and finding that out at the arm button is worse than knowing now. */
+
+#device-warn {
+  position: fixed;
+  left: 50%;
+  top: calc(var(--topbar-h, 96px) + 12px);
+  transform: translateX(-50%);
+  z-index: 9;
+  max-width: min(90vw, 620px);
+  padding: 10px 16px;
+  background: var(--err-bg);
+  border: 1px solid var(--err);
+  border-radius: 8px;
+  color: #f0c9c9;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+#device-warn b { color: #fff; font-weight: normal; }
+/* The picker owns the screen while it's up. */
+body.picking #device-warn { display: none; }
+#device-warn a { color: #fff; }
+
+/* ---- first-open tile size picker ----
+   Each option is a real 3x3 of the actual cell size — the question is "can
+   your finger hit that", which a millimetre figure can't answer. */
+
+#size-pick {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(10, 11, 14, .92);
+  display: flex;
+  padding: 24px;
+  overflow: auto;
+}
+/* auto margins, not align-items:center — centred when it fits, and when it
+   doesn't (four true-size samples on a phone) the top stays reachable
+   instead of being clipped above the scroll origin. */
+.sp-card { margin: auto; max-width: min(1120px, 96vw); text-align: center; }
+.sp-title { font-size: 20px; color: var(--fg); }
+.sp-sub {
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: .7rem auto 0;
+  max-width: 56ch;
+}
+.sp-opts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;   /* labels line up however tall the samples are */
+  justify-content: center;
+  gap: 14px;
+  margin-top: 1.6rem;
+}
+.sp-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 1px solid var(--faint);
+  border-radius: 10px;
+  padding: 16px;
+  cursor: pointer;
+  font-family: var(--mono);
+  color: var(--dim);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.sp-opt:hover, .sp-opt:focus-visible { border-color: var(--caret); color: var(--fg); outline: none; }
+.sp-opt:active { background: rgba(255, 255, 255, .06); }
+/* The 3x3 at its true size: --c is the cell in px, set per option in JS. */
+.sp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, var(--c));
+  grid-template-rows: repeat(3, var(--c));
+  gap: 2px;
+}
+.sp-grid i {
+  display: block;
+  background: rgba(224, 180, 82, .16);
+  border: 1px solid var(--faint);
+  border-radius: 2px;
+}
+/* One lit cell per sample, so each option shows a target at that size. */
+.sp-grid i:nth-child(5) { background: var(--accent); border-color: var(--accent); }
+.sp-size { font-size: 13px; }
+.sp-note { color: var(--dim); font-size: 12.5px; margin-top: 1.8rem; }
+.sp-note b { color: var(--fg); font-weight: normal; }
+
 /* ---- settings sheet (matches stream-typing) ---- */
 
 #gallery-link {

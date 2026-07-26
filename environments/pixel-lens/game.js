@@ -53,10 +53,30 @@ let previewDepth = 0;      // look-ahead: upcoming targets shown as dimmer dots
 let cellMm = DEFAULT_CELL_MM;
 let zoomMode = 'auto'; // 'auto' (25mm apparent) or a fixed multiplier
 let audioOn = true;    // short buzz on a miss
+let sizeChosen = false; // has this player ever picked a tile size here?
 
 let CONFIG = null, N = 0, BITS = 0, DURATION_MS = 60000;
 let grid = { cols: 0, rows: 0, cell: 19, w: 0, h: 0 };
 let lensMag = 5; // center magnification; falls off to 1 at the rim
+
+// ---- which hands is this device actually offering? ----
+// Two different questions, two different answers, and only one of them is
+// reliable:
+//
+//   capability — does this device have a touchscreen at all? `any-pointer:
+//     coarse` / maxTouchPoints. True on a touch laptop, which is the case
+//     that rules out anything cruder. Good enough to warn on, never to judge:
+//     a touch laptop can still be played entirely with the trackpad.
+//   what was actually used — PointerEvent.pointerType on the selection
+//     itself: 'touch' | 'pen' | 'mouse'. Per event, from the browser, for the
+//     hand that made *this* selection. That is the authority, and it's why
+//     drum pad gates on selections rather than on device sniffing.
+
+function hasTouchscreen() {
+  try {
+    return (navigator.maxTouchPoints || 0) > 0 || matchMedia('(any-pointer: coarse)').matches;
+  } catch { return false; }
+}
 
 // A device with only a coarse pointer has no hover, so pixel lens's 5 mm cells
 // and fisheye loupe are unplayable on it — that player wants drum pad.
@@ -67,10 +87,19 @@ function wrongDeviceForMode() {
   } catch { return false; }
 }
 
+// Drum pad is the touch game: its leaderboard is only worth reading if the
+// runs on it were tapped. A pointerType of 'pen' counts as touch — a stylus on
+// a tablet is direct pointing at the same cell, not cursor indirection.
+function isTouchLike(pointerType) { return pointerType === 'touch' || pointerType === 'pen'; }
+function touchRequired() { return inputMode === 'touch'; }
+
 function loadSettings() {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY_BY_MODE[inputMode]) || '{}'); } catch { /* defaults */ }
-  if (typeof s.cell_mm === 'number' && s.cell_mm >= CELL_MIN && s.cell_mm <= CELL_MAX) cellMm = s.cell_mm;
+  if (typeof s.cell_mm === 'number' && s.cell_mm >= CELL_MIN && s.cell_mm <= CELL_MAX) {
+    cellMm = s.cell_mm;
+    sizeChosen = true;
+  }
   if (s.zoom === 'auto' || (typeof s.zoom === 'number' && s.zoom >= 2 && s.zoom <= 8)) zoomMode = s.zoom;
   if (typeof s.lens_r === 'number' && s.lens_r >= 60 && s.lens_r <= 180) loupeR = s.lens_r;
   if (typeof s.audio === 'boolean') audioOn = s.audio;
@@ -405,6 +434,19 @@ fieldEl.addEventListener('pointerdown', (e) => {
       endTimer = setTimeout(endScoredRun, run.t0 + DURATION_MS - performance.now());
     }
   }
+  // Drum pad's whole claim is that a finger did this. A mouse click landing in
+  // a scored run invalidates it, the same as losing the window — the run can't
+  // stand, and silently scoring it would put a cursor run on a touch board.
+  if (touchRequired() && !isTouchLike(e.pointerType)) {
+    if (run.scored && run.started) { abortScoredRun('mouse_input'); return; }
+    if (state === 'armed') { toPractice(); }
+    run.mouseSeen = true;
+    showNotice('drum pad is the touch game — that was a <b>' + e.pointerType +
+      '</b>. tap the grid to play; scored runs need a touchscreen.', 'warn', 5000);
+    return;
+  }
+  if (isTouchLike(e.pointerType)) run.touchSeen = true;
+
   const t = e.timeStamp - run.t0;
   const r = fieldEl.getBoundingClientRect();
   const x = e.clientX - r.left;
@@ -790,6 +832,14 @@ BitrateResults.wireActs({ arm: armScoredRun, seed: toPractice, settings: toggleS
 // ---- mode transitions ----
 
 async function armScoredRun() {
+  // A touch laptop passes this by tapping once; a mouse-only machine can't.
+  if (touchRequired() && !(run && run.touchSeen)) {
+    showNotice(hasTouchscreen()
+      ? 'tap the grid once first — scored drum pad runs have to be tapped, not clicked'
+      : 'this device has no touchscreen. drum pad scores taps; try it on a tablet or phone, '
+        + 'or play <a href="/env/pixel-lens/">pixel lens</a> with the mouse.', 'warn', 7000);
+    return;
+  }
   await finishBout();
   try {
     await startRun(true);
@@ -833,7 +883,9 @@ function abortScoredRun(reason) {
   if (reason !== 'aborted') {
     const why = reason === 'resized'
       ? 'viewport changed — the alphabet resized, run invalidated'
-      : 'scored run invalidated — window lost focus';
+      : reason === 'mouse_input'
+        ? 'scored run invalidated — drum pad scores taps, and that was a mouse'
+        : 'scored run invalidated — window lost focus';
     showNotice(why + ' · <b>Enter</b> re-arms', 'warn', 6000);
   }
 }
@@ -1131,8 +1183,65 @@ buildConfig();
 scheduleFlush(1500);
 applyCfgParam().then(() => startRun(false)).catch(showError);
 
+// ---- first open: pick a tile size ----
+// Cell size is the one setting that changes what the game *is* — it sets N and
+// whether a tap lands first try — and the right answer is a property of the
+// player's hand and screen, not something a default can know. So ask once,
+// with the sizes drawn at their real physical size rather than named in
+// millimetres nobody can picture. Everything after this is the settings sheet.
+
+function showSizePicker() {
+  const wrap = document.createElement('div');
+  wrap.id = 'size-pick';
+  const opts = CELL_OPTS[inputMode].map((mm) => {
+    const px = Math.max(6, Math.round(mm * PX_PER_MM));
+    const cells = new Array(9).fill('<i></i>').join('');
+    return '<button type="button" class="sp-opt" data-v="' + mm + '">' +
+      '<span class="sp-grid" style="--c:' + px + 'px">' + cells + '</span>' +
+      '<span class="sp-size">' + mm + ' mm</span></button>';
+  }).join('');
+  wrap.innerHTML =
+    '<div class="sp-card">' +
+    '<div class="sp-title">how big should the tiles be?</div>' +
+    '<div class="sp-sub">' +
+    (inputMode === 'touch'
+      ? 'pick what your finger can hit first try. smaller tiles mean more of them — more bits per tap — right up until you start missing.'
+      : 'pick what you can click without aiming. smaller cells mean more of them — more bits per click — until the pointing costs more than the bits are worth.') +
+    '</div>' +
+    '<div class="sp-opts">' + opts + '</div>' +
+    '<div class="sp-note">you can change this any time — <b>settings</b>, during practice</div>' +
+    '</div>';
+  document.body.appendChild(wrap);
+  document.body.classList.add('picking');
+  wrap.addEventListener('click', (e) => {
+    const b = e.target.closest('.sp-opt');
+    if (!b) return;
+    cellMm = Number(b.dataset.v);
+    sizeChosen = true;
+    saveSettings();
+    wrap.remove();
+    document.body.classList.remove('picking');
+    buildConfig();
+    toPractice();
+  });
+}
+
 // Opened the mouse game on a touchscreen: the loupe needs a hover this device
 // doesn't have. Point at the game that fits rather than letting them fight it.
 if (wrongDeviceForMode()) {
   showNotice('no mouse here — <a href="/env/drum-pad/">drum pad</a> is the touch version of this grid', '', 12000);
 }
+
+// Drum pad on a machine with no touchscreen at all: say so up front and keep
+// saying it. Practice still works with the mouse — it's the scored run that
+// has to be tapped — so this is a standing banner, not a wall.
+if (touchRequired() && !hasTouchscreen()) {
+  const warn = document.createElement('div');
+  warn.id = 'device-warn';
+  warn.innerHTML = 'drum pad is a <b>touch</b> game and this device has no touchscreen. ' +
+    'practise with the mouse if you like, but a scored run has to be tapped — ' +
+    'open it on a phone or tablet, or play <a href="/env/pixel-lens/">pixel lens</a> with the mouse.';
+  document.body.appendChild(warn);
+}
+
+if (!sizeChosen) showSizePicker();
