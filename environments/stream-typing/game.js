@@ -81,6 +81,8 @@ const modeBanner = $('mode-banner');
 const modeHelp = $('mode-help');
 const capsWarning = $('caps-warning');
 const imeWarning = $('ime-warning');
+const hintEl = $('hint');
+const kbdEl = $('kbd-catcher');
 const overlay = $('overlay');
 const card = $('card');
 const resultsEl = $('results');
@@ -196,6 +198,9 @@ function setState(next) {
   $('topbar').hidden = next === 'done';
   // Settings only reachable from practice; never mid-run.
   if (next !== 'practice' && sheetOpen) closeSheet();
+  // The score screen is a screenful of numbers: drop the soft keyboard so
+  // there is room for them (the arm button brings it back).
+  if (next === 'done' || next === 'error') blurKbd();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
     modeBanner.className = 'mode-practice';
@@ -350,9 +355,43 @@ function applySelection(key, ts) {
   }
 }
 
+// One selection, whatever produced it — a physical keydown or a soft
+// keyboard's input event. Both paths land here so both obey the same rules:
+// anything outside the N-selection set is ignored, and the run boundary is
+// judged on the event's own timestamp.
+function offerSelection(key, ts) {
+  if (state !== 'practice' && state !== 'armed' && state !== 'scored') return;
+  if (!run) return;
+  if (key === 'Backspace') {
+    if (!CONFIG.backspace) return;
+  } else if (!ALPHA.has(key)) {
+    return;
+  }
+  // Past the 60.000 s boundary: pressed-late keys are ignored; the timeStamp
+  // check means a key pressed before the boundary but processed after it
+  // still counts (spec §2.5).
+  if (run.scored && run.started && ts - run.t0 >= DURATION_MS) return;
+  clearEscPending(); // typing again withdraws a pending Esc
+  applySelection(key, ts);
+}
+
 // ---- keyboard (spec §7 implementation pitfalls) ----
 
 document.addEventListener('keydown', (e) => {
+  // Soft keyboard: the phantom field owns letters and backspace — they arrive
+  // as `input` events, because a soft key's keydown carries no usable key
+  // (Android reports keyCode 229 for every one of them). Return still arms,
+  // which is what a phone keyboard's go key should do.
+  if (e.target === kbdEl) {
+    // The one thing this keydown is still good for: a held key autorepeats
+    // into the field, and autorepeat is not a selection on either path.
+    kbdRepeat = e.repeat;
+    if (e.key === 'Enter' && (state === 'practice' || state === 'done' || state === 'error')) {
+      e.preventDefault();
+      armScoredRun();
+    }
+    return;
+  }
   // IME composition breaks one-keydown-one-selection (spec §7).
   if (e.isComposing || e.keyCode === 229) {
     imeActive = true;
@@ -415,19 +454,9 @@ document.addEventListener('keydown', (e) => {
   // navigation) whether or not it's a selection.
   e.preventDefault();
 
-  if (e.repeat) return;                    // autorepeat is not a selection
-  if (!isBackspace && !ALPHA.has(ch)) return; // outside the N-selection set: ignored
-  if (isBackspace && !CONFIG.backspace) return;
+  if (e.repeat) return; // autorepeat is not a selection
 
-  if (state !== 'practice' && state !== 'armed' && state !== 'scored') return;
-
-  // Past the 60.000 s boundary: pressed-late keys are ignored; the
-  // timeStamp check means a key pressed before the boundary but processed
-  // after it still counts (spec §2.5).
-  if (run.scored && run.started && e.timeStamp - run.t0 >= DURATION_MS) return;
-
-  clearEscPending(); // typing again withdraws a pending Esc
-  applySelection(isBackspace ? 'Backspace' : ch, e.timeStamp);
+  offerSelection(isBackspace ? 'Backspace' : ch, e.timeStamp);
 });
 
 document.addEventListener('keyup', (e) => {
@@ -445,8 +474,136 @@ document.addEventListener('keyup', (e) => {
   }
 });
 
-document.addEventListener('compositionstart', () => { imeActive = true; imeWarning.hidden = false; });
-document.addEventListener('compositionend', () => { imeActive = false; });
+// A soft keyboard composes as a matter of course (predictive text), so a
+// composition in the phantom field is not the desktop-IME problem the warning
+// is about — the input path below reads it correctly either way.
+document.addEventListener('compositionstart', (e) => {
+  if (e.target === kbdEl) return;
+  imeActive = true;
+  imeWarning.hidden = false;
+});
+document.addEventListener('compositionend', (e) => {
+  if (e.target === kbdEl) return;
+  imeActive = false;
+});
+
+// ---- soft keyboard (spec §4.3.1): playing this on a phone ----
+//
+// Nothing on the page used to be focusable, so a phone showed no keyboard and
+// the environment was unplayable there. #kbd-catcher is a transparent input
+// stretched over the play field: tapping the stream focuses it, and focusing
+// it is what raises the keyboard. While it has focus, selections come from
+// its `input` events rather than from keydown — a soft key's keydown carries
+// no usable `key` (Android sends keyCode 229 / "Unidentified" for all of
+// them), whereas the field's value is exact on every platform.
+
+// Does this device have a touchscreen at all? Only that question is settled
+// here; on anything else the field never takes focus and the keydown path is
+// untouched, so a touch laptop keeps its physical keyboard until it is tapped.
+const TOUCH = (navigator.maxTouchPoints || 0) > 0 ||
+  matchMedia('(any-pointer: coarse)').matches;
+
+// The field always carries filler (non-breaking spaces — an ordinary space
+// invites the double-space-to-period substitution), because a soft keyboard's
+// backspace on an empty field fires no event at all, and backspace is one of
+// the N selections (spec §2.4), so it has to be reportable.
+const KBD_PAD = ' '.repeat(24);
+let kbdPrev = '';
+let kbdOpen = false;
+let kbdRepeat = false; // set by the keydown that precedes an input event
+
+function resetKbd() {
+  kbdEl.value = KBD_PAD;
+  kbdPrev = KBD_PAD;
+  pinCaret(KBD_PAD.length);
+}
+
+// A tap sets the caret from where the finger landed, which is somewhere in
+// the middle of the filler — and an insertion there reads as delete-and-
+// retype, scoring a burst of backspaces per keystroke. The field is invisible
+// and its contents mean nothing, so no caret position is worth honouring:
+// pin it to the end whenever anything moves it.
+function pinCaret(end) {
+  if (end === undefined) {
+    if (document.activeElement !== kbdEl) return;
+    end = kbdEl.value.length;
+    if (kbdEl.selectionStart === end && kbdEl.selectionEnd === end) return;
+  }
+  try { kbdEl.setSelectionRange(end, end); } catch { /* not selectable yet */ }
+}
+
+kbdEl.addEventListener('click', () => pinCaret());
+document.addEventListener('selectionchange', () => pinCaret());
+
+function focusKbd() {
+  if (!TOUCH) return;
+  resetKbd();
+  kbdEl.focus({ preventScroll: true });
+}
+
+function blurKbd() {
+  if (TOUCH && document.activeElement === kbdEl) kbdEl.blur();
+}
+
+// Each input event is diffed against the value we last saw: characters gained
+// are selections, characters lost are backspaces, in that order. Predictive
+// text rewriting the tail therefore scores exactly as the same keystrokes
+// typed by hand would, and nothing needs to know which IME produced them.
+kbdEl.addEventListener('input', (e) => {
+  const v = kbdEl.value;
+  if (!kbdRepeat) { // a held key still lands in the field; it just isn't scored
+    let i = 0;
+    while (i < v.length && i < kbdPrev.length && v[i] === kbdPrev[i]) i++;
+    for (let d = kbdPrev.length - i; d > 0; d--) offerSelection('Backspace', e.timeStamp);
+    // Case-folded like the keydown path: a soft keyboard capitalizes on its own.
+    for (const ch of v.slice(i)) offerSelection(ch.toLowerCase(), e.timeStamp);
+  }
+  kbdRepeat = false;
+  // Keep filler deep in both directions, but re-pad only when it runs low or
+  // long — rewriting the value mid-word fights the IME for no reason.
+  if (v.length < 8 || v.length > 96) resetKbd();
+  else kbdPrev = v;
+});
+
+kbdEl.addEventListener('focus', () => { resetKbd(); renderHint(); });
+kbdEl.addEventListener('blur', renderHint);
+
+// On a phone the first thing to say is how to get a keyboard; once it's up,
+// the rule of the game.
+function renderHint() {
+  hintEl.textContent = TOUCH && document.activeElement !== kbdEl
+    ? 'tap the stream to bring up the keyboard'
+    : 'type the letter at the caret · miss → backspace → retype';
+}
+
+// Vertical space: the keyboard covers the bottom of the screen and the stream
+// must never be under it. The layout viewport does not shrink when it opens
+// (iOS never resizes it; Chrome's default is `resizes-visual`), so the covered
+// strip is measured off visualViewport and published as --kbd-inset — the play
+// field ends there and re-centres the stream in what is left.
+const vv = window.visualViewport;
+
+function syncKbdInset() {
+  if (!vv) return;
+  const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  document.documentElement.style.setProperty('--kbd-inset', inset + 'px');
+  const open = inset > 120; // a keyboard, not a URL bar collapsing
+  if (open !== kbdOpen) {
+    kbdOpen = open;
+    document.body.classList.toggle('kbd-open', open);
+  }
+  // Nothing here scrolls; iOS scrolls the layout viewport anyway to reveal a
+  // focused field, which would push the header off-screen.
+  if (window.scrollY) window.scrollTo(0, 0);
+}
+
+if (TOUCH) {
+  document.body.classList.add('touch'); // the field starts taking taps
+  if (vv) {
+    vv.addEventListener('resize', syncKbdInset);
+    vv.addEventListener('scroll', syncKbdInset);
+  }
+}
 
 function updateCapsWarning(e) {
   const caps = e.getModifierState && e.getModifierState('CapsLock');
@@ -745,6 +902,7 @@ async function toggleSheet() {
 
 function openSheet() {
   if (state !== 'practice') return;
+  blurKbd(); // the sheet comes up from the same edge the keyboard does
   sheetOpen = true;
   syncSheet();
   sheetEl.classList.add('open');
@@ -813,7 +971,21 @@ $('set-lookahead').addEventListener('change', (e) => {
 
 // Corner strip in play + the score screen's footer: same buttons, one binder
 // (shared with every other environment — see common/results.js).
-BitrateResults.wireActs({ arm: armScoredRun, seed: toPractice, settings: toggleSheet });
+//
+// Tapping a button drops the soft keyboard. Arm and reseed mean "keep
+// playing", so they take it straight back — inside the tap, because iOS only
+// opens a keyboard from a real gesture and the run/start fetch these actions
+// await is long since past that. Settings wants the screen instead.
+BitrateResults.wireActs(
+  { arm: armScoredRun, seed: toPractice, settings: toggleSheet },
+  (e) => {
+    if (!TOUCH || !e || !e.target.closest) return;
+    const act = e.target.closest('[data-act]');
+    if (!act || e.detail === 0) return; // keyboard activation: not a tap
+    if (act.dataset.act === 'settings') blurKbd();
+    else focusKbd();
+  },
+);
 
 // ---- boot: straight into practice; flush any stranded submissions ----
 
@@ -837,5 +1009,7 @@ async function applyCfgParam() {
 // viewport; publish it so the play area always starts below it.
 window.BitrateResults.trackHeaderHeight();
 loadConfig();
+renderHint();    // on a phone the hint is how you get a keyboard at all
+syncKbdInset();  // 0 until one opens, but the var has to exist
 scheduleFlush(1500);
 applyCfgParam().then(() => startRun(false)).catch(showError);

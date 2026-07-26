@@ -223,11 +223,14 @@ function renderSpark(hostId, run, bits, nowT) {
 // #mode-help (in play) and #res-footer (score screen) carry the same
 // <button class="act click" data-act="…"> markup in every environment, so a
 // single binder covers both. `before` runs on any click in either strip —
-// environments with audio use it to resume a suspended AudioContext, which
-// browsers only allow from a user gesture.
+// environments with audio use it to resume a suspended AudioContext, and
+// stream-typing to keep the soft keyboard up across a re-arm — both things
+// browsers only allow from inside a user gesture, so `before` runs
+// synchronously, ahead of any action that awaits the network. It receives the
+// click event (stream-typing needs to know which control was tapped).
 function wireActs(handlers, before) {
   const onClick = (e) => {
-    if (before) before();
+    if (before) before(e);
     const act = e.target.closest('[data-act]');
     if (!act) return;
     // Keyboard activation (detail 0) is already handled by each game's own

@@ -43,6 +43,14 @@
     </div>
     <div id="hint">type the letter at the caret · miss → backspace → retype</div>
     <div id="notice" hidden></div>
+    <!-- Phantom input (spec §4.3.1): a phone has no physical keys, and a soft
+         keyboard only opens over a focused field. This one is transparent and
+         covers the play field, so the tap that raises the keyboard is the
+         natural one — on the stream itself. It stays inert (pointer-events:
+         none, never focused) unless the device has a touchscreen. -->
+    <input id="kbd-catcher" type="text" inputmode="text" autocomplete="off"
+           autocorrect="off" autocapitalize="off" spellcheck="false"
+           enterkeyhint="go" tabindex="-1" aria-label="typing field">
   </main>
 
   <!-- Results view (spec §8): headline bps + server-computed diagnostics.
