@@ -247,6 +247,35 @@ func (s *Store) PutKeystrokes(runID string, keys []Selection) error {
 	return nil
 }
 
+// ReadKeystrokes reads a run's keystroke log back off disk — the mirror of
+// PutKeystrokes, and the only path that faults the bulk in. A run with no log
+// (never submitted, or merged from an instance that withheld it) reads as
+// empty, not as an error.
+func (s *Store) ReadKeystrokes(runID string) ([]Selection, error) {
+	f, err := os.Open(filepath.Join(s.dir, "keys", runID+".jsonl"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []Selection{}, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	var out []Selection
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
+	for sc.Scan() {
+		if len(sc.Bytes()) == 0 {
+			continue
+		}
+		var k Selection
+		if err := json.Unmarshal(sc.Bytes(), &k); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, sc.Err()
+}
+
 // GetRun returns the run record, or nil.
 func (s *Store) GetRun(id string) *Run {
 	s.mu.RLock()

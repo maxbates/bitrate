@@ -16,13 +16,11 @@ package main
 // leaderboard for free (spec §4.4).
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -321,7 +319,7 @@ func (s *server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	out := map[string]any{"run": run, "result": res}
 	if r.URL.Query().Get("keystrokes") == "1" {
-		keys, err := s.readKeystrokes(id)
+		keys, err := s.store.ReadKeystrokes(id)
 		if err != nil {
 			httpErr(w, http.StatusInternalServerError, err.Error())
 			return
@@ -329,31 +327,6 @@ func (s *server) handleRunDetail(w http.ResponseWriter, r *http.Request) {
 		out["keystrokes"] = keys
 	}
 	writeJSON(w, out)
-}
-
-func (s *server) readKeystrokes(runID string) ([]Selection, error) {
-	f, err := os.Open(filepath.Join(s.store.dir, "keys", runID+".jsonl"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []Selection{}, nil
-		}
-		return nil, err
-	}
-	defer f.Close()
-	var out []Selection
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 1<<20), 1<<20)
-	for sc.Scan() {
-		if len(sc.Bytes()) == 0 {
-			continue
-		}
-		var k Selection
-		if err := json.Unmarshal(sc.Bytes(), &k); err != nil {
-			return nil, err
-		}
-		out = append(out, k)
-	}
-	return out, sc.Err()
 }
 
 // handleExport: the interchange bundle (spec §4.4). Backup is cp -r data/;
@@ -388,7 +361,7 @@ func (s *server) handleExport(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("include") == "keystrokes" {
 		keys := map[string][]Selection{}
 		for _, run := range runs {
-			ks, err := s.readKeystrokes(run.ID)
+			ks, err := s.store.ReadKeystrokes(run.ID)
 			if err == nil && len(ks) > 0 {
 				keys[run.ID] = ks
 			}

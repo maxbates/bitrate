@@ -61,7 +61,7 @@ func TestMergeAddsRows(t *testing.T) {
 	if runs != 1 || results != 1 || variants != 1 {
 		t.Fatalf("counts = %d/%d/%d, want 1/1/1", runs, results, variants)
 	}
-	ks, err := (&server{store: s}).readKeystrokes("run-1")
+	ks, err := s.ReadKeystrokes("run-1")
 	if err != nil || len(ks) != 1 || ks[0].Key != "7" {
 		t.Fatalf("keystroke log not carried: %v %v", ks, err)
 	}
