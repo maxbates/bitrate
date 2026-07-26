@@ -268,6 +268,11 @@ body.armed #field { cursor: none; }
   text-align: center;
 }
 #device-warn b { color: #fff; font-weight: normal; }
+/* Fixed, so it never moves the field or N — but it sits over live cells, and a
+   banner that eats a tap is worse than one you can read around. The box is
+   transparent to the pointer; only its links take clicks. */
+#device-warn { pointer-events: none; }
+#device-warn a { pointer-events: auto; }
 /* The picker owns the screen while it's up. */
 body.picking #device-warn { display: none; }
 #device-warn a { color: #fff; }
@@ -440,6 +445,10 @@ body.picking #device-warn { display: none; }
 }
 #notice.warn { color: var(--err); }
 #notice b { color: inherit; font-weight: bold; }
+/* Same rule as #device-warn: the "press Esc again" toast can be up during a
+   live scored run, and a tap it swallowed would be silently lost time. */
+#notice { pointer-events: none; }
+#notice a { pointer-events: auto; }
 
 /* ---- error overlay ---- */
 
