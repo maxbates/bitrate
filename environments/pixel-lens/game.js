@@ -485,7 +485,7 @@ fieldEl.addEventListener('pointerdown', (e) => {
   // look-ahead dot is a distinct mistake — acting on "next" as if it were
   // "now" — so it gets a much louder red reaction in either input mode.
   const early = !verdict && isPreviewCell(cell);
-  if (early) earlyFlash(x, y);
+  if (early) earlyFlash();
   else if (inputMode === 'touch') tapFlash(x, y, verdict);
   else if (!verdict) missFlash();
   if (!verdict) errorBuzz();
@@ -539,16 +539,14 @@ function isPreviewCell(cell) {
   return false;
 }
 
-// The loudest error in the game: a big red burst at the tap point plus a red
-// pulse around the field. Deliberately more than an ordinary near-miss, so
-// "you tapped the green one" is unmistakable at a glance.
-function earlyFlash(x, y) {
-  const el = document.createElement('div');
-  el.className = 'tap-flash early';
-  el.style.left = x + 'px';
-  el.style.top = y + 'px';
-  fieldEl.appendChild(el);
-  setTimeout(() => el.remove(), 520);
+// The loudest error in the game: a red pulse around the whole field, so "you
+// tapped the green one" is unmistakable at a glance. No ring at the tap point —
+// the border alone carries it, and a red circle drawn over the green dot you
+// just hit reads as two separate errors (owner's call, 2026-07-26).
+let earlyFlashes = 0;
+
+function earlyFlash() {
+  earlyFlashes++;
   fieldEl.classList.remove('err-pulse');
   void fieldEl.offsetWidth; // restart the pulse on back-to-back early taps
   fieldEl.classList.add('err-pulse');
@@ -561,21 +559,45 @@ function earlyFlash(x, y) {
 
 let audioCtx = null;
 
-function errorBuzz() {
+// iOS hands out every AudioContext suspended and only a user gesture may start
+// it, so warm it on the first interaction of the session rather than on the
+// first *miss* — a buzz that has to build its own context arrives late or not
+// at all. Cheap and idempotent; kept off the tap path after the first call.
+function ensureAudio() {
   if (!audioOn) return;
   try {
     audioCtx = audioCtx || new AudioContext();
     if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch { /* audio is never load-bearing */ }
+}
+// Self-removing rather than {once}: a tap taken with the buzz switched off must
+// not burn the one chance to warm up.
+function warmAudioOnce() {
+  ensureAudio();
+  if (audioCtx) document.removeEventListener('pointerdown', warmAudioOnce, true);
+}
+document.addEventListener('pointerdown', warmAudioOnce, true);
+
+function errorBuzz() {
+  if (!audioOn) return;
+  ensureAudio();
+  if (!audioCtx) return;
+  try {
     const t0 = audioCtx.currentTime;
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     o.type = 'square';
-    o.frequency.value = 110;
-    g.gain.setValueAtTime(0.05, t0);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+    // 220, not the 110 this started at: a tablet's speakers are physically too
+    // small to radiate a 110 Hz fundamental, so on an iPad the buzz was there
+    // in the graph and inaudible in the room. 220 with a square's harmonics
+    // sits where small speakers actually work, and stays a low buzz on a
+    // laptop rather than a beep. Level up to match (2026-07-26).
+    o.frequency.value = 220;
+    g.gain.setValueAtTime(0.12, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.1);
     o.connect(g).connect(audioCtx.destination);
     o.start(t0);
-    o.stop(t0 + 0.09);
+    o.stop(t0 + 0.1);
   } catch { /* audio is never load-bearing */ }
 }
 
@@ -886,6 +908,7 @@ $('seg-audio').addEventListener('click', (e) => {
   if (!b) return;
   b.blur();
   segApply(() => { audioOn = b.dataset.v === 'on'; });
+  ensureAudio(); // switching it on is itself the gesture iOS wants
 });
 
 $('seg-zoom').addEventListener('click', (e) => {
@@ -1251,7 +1274,7 @@ window.pixelDebug = {
   // Live look-ahead cells, and whether the last tap triggered the loud
   // "you hit the green dot" reaction.
   previewCells: () => (run ? run.seq.slice(run.pos + 1, run.pos + 1 + previewDepth) : []),
-  earlyFlashCount: () => fieldEl.querySelectorAll('.tap-flash.early').length,
+  earlyFlashCount: () => earlyFlashes,
   // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
   // current input mode) — exercises the same handler a finger/mouse would.
   tapCell: (idx, type) => {
@@ -1307,6 +1330,19 @@ function refreshSizePicker() {
   if (host) host.innerHTML = sizeOptionsHTML();
 }
 
+// Touch only. Tile size is half the decision — the other half is which device
+// and how many fingers, and a first-session player has no way to know either.
+// Three lines, shown at the one moment they're actionable: hands, device, and
+// the standing permission to go try it rather than reason about it.
+function touchTipsHTML() {
+  if (inputMode !== 'touch') return '';
+  return '<ul class="sp-tips">' +
+    '<li><b>fingers</b> — tablet: two index fingers. phone: one, so your hand never covers the board.</li>' +
+    '<li><b>device</b> — a tablet fits more tiles, so taps are worth more: take it if your arm moves freely, stay on the phone if reach is the limit.</li>' +
+    '<li><b>try it</b> — practice is free. a few seconds at two or three sizes, then trust your hand.</li>' +
+    '</ul>';
+}
+
 function showSizePicker() {
   const wrap = document.createElement('div');
   wrap.id = 'size-pick';
@@ -1315,9 +1351,10 @@ function showSizePicker() {
     '<div class="sp-title">how big should the tiles be?</div>' +
     '<div class="sp-sub">' +
     (inputMode === 'touch'
-      ? 'pick what your finger can hit first try. smaller tiles mean more of them — more bits per tap — right up until you start missing.'
+      ? 'more tiles means more bits per tap, but smaller tiles get missed — and a miss costs double. pick the smallest tile you hit almost every time.'
       : 'pick what you can click without aiming. smaller cells mean more of them — more bits per click — until the pointing costs more than the bits are worth.') +
     '</div>' +
+    touchTipsHTML() +
     '<div class="sp-opts">' + sizeOptionsHTML() + '</div>' +
     '<div class="sp-note">you can change this any time — <b>settings</b>, during practice</div>' +
     '</div>';
