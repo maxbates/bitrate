@@ -31,6 +31,21 @@ const ENV_META = {
     desc: 'Beat Saber, honestly scored: paced notes, webcam swipes — can deep lookahead beat self-pacing?',
     href: 'beat-hands/',
   },
+  'twin-stick': {
+    name: 'twin-stick',
+    desc: 'a gamepad, both thumbs at once: 8-way octant ribbon per stick — a real parallel channel, keyboard-competitive?',
+    href: 'twin-stick/',
+  },
+  'parabola-fall': {
+    name: 'parabola-fall',
+    desc: 'one thumb on a smile arc: dots fall into lanes at a fixed pace, catch each as it lands — a falling-lane rhythm game',
+    href: 'parabola-fall/',
+  },
+  'lane-tap': {
+    name: 'lane-tap',
+    desc: 'a strip of lanes at the bottom edge, the queue stacked above — self-paced ballistic taps, hands never occlude the lookahead',
+    href: 'lane-tap/',
+  },
 };
 
 // Off-brief environments hidden from the app (code kept on disk for
@@ -135,6 +150,15 @@ function configSummary(variantId) {
   if (v.environment === 'beat-hands') {
     return '2×' + c.directions + ' · ' + c.tempo_npm + '/min · ' + (c.input || 'camera');
   }
+  if (v.environment === 'twin-stick') {
+    return '2 sticks × ' + c.directions + ' · ' + c.tempo_npm + '/min';
+  }
+  if (v.environment === 'parabola-fall') {
+    return c.lanes + ' lanes · ±' + c.max_step + ' · ' + c.tempo_npm + '/min';
+  }
+  if (v.environment === 'lane-tap') {
+    return c.lanes + ' lanes · look ' + c.look_ahead;
+  }
   return variantId.slice(0, 8);
 }
 
@@ -181,6 +205,9 @@ function bitsLabel(env) {
   if (env === 'pixel-lens') return 'N = your viewport';
   if (env === 'voice-babble') return 'N=6–26 · your voice';
   if (env === 'beat-hands') return 'N=8–16 · paced';
+  if (env === 'twin-stick') return '2×N=8 · gamepad';
+  if (env === 'parabola-fall') return 'N=7–21 · falling lanes';
+  if (env === 'lane-tap') return 'N=9–26 · self-paced taps';
   return '';
 }
 

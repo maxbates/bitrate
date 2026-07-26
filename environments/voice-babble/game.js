@@ -40,11 +40,6 @@ const SETS = {
     symbols: ['a', 'e', 'f', 'i', 'o', 'r', 's', 'u', 'x'],
     note: 'letter names picked for distinct sounds',
   },
-  'letters-26': {
-    label: 'a–z',
-    symbols: 'abcdefghijklmnopqrstuvwxyz'.split(''),
-    note: 'expected to fail on the e-set — measure it',
-  },
 };
 
 const SET_KEY = 'bitrate_voice_set_v1';
@@ -53,7 +48,7 @@ const SENS_KEY = 'bitrate_voice_sens_v1';
 const TEMPLATES_KEY = 'bitrate_voice_templates_v1';
 const MAX_LANES = 9; // beyond this, lanes stop being readable
 
-let setName = 'babble-6';
+let setName = 'solfege'; // do–ti is the default set
 let SET = SETS[setName];
 let display = 'lanes'; // lanes | chips (lanes forced off for big sets)
 let CONFIG = null, N = 0, BITS = 0, DURATION_MS = 60000;
@@ -83,7 +78,7 @@ function buildConfig() {
     symbols: SET.symbols,
     display: effectiveDisplay(),
     recognizer: 'dsp-cosine-v2',
-    segmentation: 'dip-v1',
+    segmentation: 'dip-v2',
     vad_sensitivity: sensName,
     error_policy: 'advance',
     backspace: false,
@@ -99,7 +94,7 @@ function buildConfig() {
 function loadTemplates() {
   try {
     const all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}');
-    if (all.timing !== 2) return null; // recalibrate after VAD/timing changes
+    if (all.timing !== 3) return null; // recalibrate after VAD/timing changes
     const map = (all.sets && all.sets[setName]) || null;
     if (!map) return null;
     // Stale templates from an older feature-vector shape force recalibration.
@@ -114,7 +109,7 @@ function saveTemplates(map) {
   let all;
   try { all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}'); } catch { all = {}; }
   all.version = 1;
-  all.timing = 2;
+  all.timing = 3;
   all.sets = all.sets || {};
   all.sets[setName] = map;
   try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(all)); } catch { /* fine */ }
@@ -164,15 +159,23 @@ const ZCR_WEIGHT = 6;
 let audioCtx = null;
 let analyser = null;
 let micOK = false;
+let micStarting = false;
 let bandBins = null; // [ [startBin, endBin), ... ]
 let freqBuf = null, timeBuf = null;
 
+// Idempotent: safe to call at boot (desktop) or from the touch gate's tap.
+// On iOS both getUserMedia and the AudioContext must originate inside a user
+// gesture, so the caller decides when — micInit just does it once.
 async function micInit() {
+  if (micStarting || micOK) return;
+  micStarting = true;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
     audioCtx = new AudioContext();
+    // iOS creates the context suspended even inside a gesture until resumed.
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
@@ -192,6 +195,8 @@ async function micInit() {
   } catch (err) {
     micOK = false;
     showNotice('microphone unavailable — allow access and reload', 'warn', 60000);
+  } finally {
+    micStarting = false;
   }
 }
 
@@ -269,8 +274,33 @@ function classify(vec) {
 
 // ---- VAD / segmenter ----
 
-const SENS = { high: 0.005, med: 0.008, low: 0.013 }; // absolute onset RMS floor
+// Absolute onset RMS floor. These were set against a hot mic; a laptop's
+// built-in array with AGC off can peak around 0.01 on a shout, which left the
+// old 0.005 "sensitive" floor sitting right at a yell — the meter barely
+// reached the trigger line. Dropped ~4× so normal speech clears it with room
+// to spare; steady background is rejected by the noise-floor term below, not
+// by this number.
+const SENS = { high: 0.0012, med: 0.003, low: 0.007 };
 let sensName = 'high'; // raw mic gain (no AGC) usually runs quiet — default sensitive
+
+// Onset trigger = the higher of a multiple of the tracked noise floor or the
+// preset's absolute floor. The floor term rejects *steady* background (it can't
+// exceed its own adapting floor); the multiple sets how far above it a sound
+// must jump to count. 1.8× (was 3×) picks up softer speech — impulsive clicks
+// are still dropped downstream by MIN_FRAMES, so this doesn't leak steady
+// noise in.
+const TRIGGER_MULT = 1.8;
+function onsetThreshold() { return Math.max(seg.noiseFloor * TRIGGER_MULT, SENS[sensName] || SENS.high); }
+
+// The noise floor gates itself: every non-triggering frame used to be folded
+// into it at one rate, so a sound that ramped in under the trigger dragged the
+// floor up, which raised the trigger, which let the next (louder) frame stay
+// sub-threshold — a ratchet that ends with even a yell failing to register.
+// Rise slowly (~4 s), fall fast (~0.3 s), and cap it: a real room settles in a
+// few seconds, but one loud unrecognized utterance can't move it far.
+const NOISE_RISE = 0.004;
+const NOISE_FALL = 0.05;
+const NOISE_MAX = 0.02;
 
 const seg = {
   active: false,
@@ -306,8 +336,8 @@ function processFrame(f) {
   updateLevel(f.rms);
 
   const sens = SENS[sensName] || SENS.high;
-  const onsetThresh = Math.max(seg.noiseFloor * 4, sens);
-  const endThresh = Math.max(seg.noiseFloor * 2, sens * 0.55);
+  const onsetThresh = onsetThreshold();
+  const endThresh = Math.max(seg.noiseFloor * 1.6, sens * 0.5);
   if (f.rms > seg.peak) seg.peak = f.rms;
   seg.peak *= 0.995;
 
@@ -316,7 +346,8 @@ function processFrame(f) {
     else if (f.rms > onsetThresh) {
       startSyllable(f);
     } else {
-      seg.noiseFloor = seg.noiseFloor * 0.98 + f.rms * 0.02;
+      const rate = f.rms > seg.noiseFloor ? NOISE_RISE : NOISE_FALL;
+      seg.noiseFloor = Math.min(NOISE_MAX, seg.noiseFloor + (f.rms - seg.noiseFloor) * rate);
     }
     return;
   }
@@ -400,7 +431,12 @@ function finishUtterance(t) {
 }
 
 function updateLevel(rms) {
-  const pct = Math.min(100, Math.round((rms / 0.06) * 100));
+  // Scale the meter to the live trigger: the threshold line sits at the 50%
+  // midpoint, so a sound clears the middle exactly when it will register, and
+  // steady background rides visibly below the line. (2× headroom above the
+  // trigger pins the bar full — this is a "am I over the line" meter, not a VU.)
+  const thr = onsetThreshold();
+  const pct = Math.max(0, Math.min(100, Math.round((rms / thr) * 50)));
   document.documentElement.style.setProperty('--level', pct + '%');
   const bar = $('calib-level-bar');
   if (state === 'calib' && bar) bar.style.width = pct + '%';
@@ -507,6 +543,8 @@ async function startRun(scored) {
         screen_h: screen.height,
         dpr: devicePixelRatio,
         lang: navigator.language,
+        touch_points: navigator.maxTouchPoints || 0,
+        pointer_coarse: matchMedia('(pointer: coarse)').matches,
       },
     }),
   });
@@ -1055,11 +1093,10 @@ $('seg-sens').addEventListener('click', (e) => {
 // register" is a level problem (peak below threshold) at a glance.
 setInterval(() => {
   if (!sheetOpen || !micOK) return;
-  const sens = SENS[sensName] || SENS.high;
   $('mic-stats').textContent =
     'mic: noise ' + seg.noiseFloor.toFixed(4) +
     ' · peak ' + seg.peak.toFixed(3) +
-    ' · trigger ' + Math.max(seg.noiseFloor * 4, sens).toFixed(4);
+    ' · trigger ' + onsetThreshold().toFixed(4) + ' (= midline)';
 }, 400);
 
 $('recalibrate').addEventListener('click', () => {
@@ -1110,10 +1147,43 @@ loadSettings();
 buildConfig();
 scheduleFlush(1500);
 templates = loadTemplates();
-micInit();
-if (!templates) {
-  startCalibration();
-  // startRun is deferred until calibration completes (calibCapture).
+
+function beginSession() {
+  if (!templates) {
+    startCalibration();
+    // startRun is deferred until calibration completes (calibCapture).
+  } else {
+    startRun(false).catch(showError);
+  }
+}
+
+// iOS/iPadOS Safari won't grant getUserMedia or unlock a suspended
+// AudioContext outside a user gesture, so a boot-time micInit() fails
+// there silently. On touch devices, hold behind an explicit tap; desktop
+// (fine pointer, no touch points) keeps auto-booting — no extra click.
+const NEEDS_GESTURE =
+  window.matchMedia('(pointer: coarse)').matches ||
+  (navigator.maxTouchPoints || 0) > 1;
+
+if (NEEDS_GESTURE) {
+  const gate = $('mic-gate');
+  const btn = $('mic-gate-btn');
+  const sub = $('mic-gate-sub');
+  gate.hidden = false;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'starting…';
+    await micInit();
+    if (micOK) {
+      gate.hidden = true;
+      beginSession();
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'try again';
+      sub.textContent = 'microphone blocked — allow it in Settings ▸ Safari ▸ Microphone, then tap again';
+    }
+  });
 } else {
-  startRun(false).catch(showError);
+  micInit();
+  beginSession();
 }

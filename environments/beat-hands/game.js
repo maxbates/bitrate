@@ -39,7 +39,7 @@ const S = { input: 'camera', dirs: 4, tempo: 90, window: 300, tick: 'on', sens: 
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-    if (s.input === 'keys' || s.input === 'camera') S.input = s.input;
+    if (['keys', 'camera', 'touch'].includes(s.input)) S.input = s.input;
     if (s.dirs === 4 || s.dirs === 8) S.dirs = s.dirs;
     if ([60, 90, 120, 150, 180].includes(s.tempo)) S.tempo = s.tempo;
     if ([200, 300, 400].includes(s.window)) S.window = s.window;
@@ -74,7 +74,7 @@ function buildConfig() {
     hit_window_ms: S.window,
     travel_ms: TRAVEL_MS,
     input: S.input,
-    recognizer: S.input === 'camera' ? 'motion-diff-v1' : 'keys',
+    recognizer: S.input === 'camera' ? 'motion-diff-v1' : (S.input === 'touch' ? 'touch-swipe-v1' : 'keys'),
     motion_sensitivity: S.input === 'camera' ? S.sens : null,
     pacing: 'fixed-tempo', // deliberate §7 deviation — the experiment (spec §5)
     error_policy: 'advance',
@@ -146,6 +146,8 @@ async function startRun(scored) {
         screen_h: screen.height,
         dpr: devicePixelRatio,
         lang: navigator.language,
+        touch_points: navigator.maxTouchPoints || 0,
+        pointer_coarse: matchMedia('(pointer: coarse)').matches,
       },
     }),
   });
@@ -597,6 +599,40 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// ---- touch: swipe on the screen to cut a note (the iPad-friendly input,
+// no camera / no secure context). hand = which half the swipe STARTS in
+// (matches the two lanes); direction = the swipe vector through the same
+// 4/8 quantizer the camera uses. A per-pointer map allows both hands at once. ----
+
+const TOUCH_MIN = 28; // CSS px of travel to count as a swipe rather than a tap
+const touchStarts = new Map();
+
+fieldEl.addEventListener('pointerdown', (e) => {
+  if (S.input !== 'touch') return;
+  e.preventDefault();
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (sheetOpen) closeSheet();
+  if (state !== 'practice' && state !== 'armed' && state !== 'scored') return;
+  const r = fieldEl.getBoundingClientRect();
+  touchStarts.set(e.pointerId, { x: e.clientX - r.left, y: e.clientY - r.top, t: e.timeStamp });
+});
+
+fieldEl.addEventListener('pointerup', (e) => {
+  if (S.input !== 'touch') return;
+  const s = touchStarts.get(e.pointerId);
+  if (!s) return;
+  touchStarts.delete(e.pointerId);
+  const r = fieldEl.getBoundingClientRect();
+  const dx = (e.clientX - r.left) - s.x;
+  const dy = (e.clientY - r.top) - s.y;
+  if (Math.hypot(dx, dy) < TOUCH_MIN) return; // a tap, not a swipe
+  const hand = s.x < W / 2 ? 0 : 1;
+  const q = quantizeDir(dx, dy);
+  onStroke(hand, q.dir, q.conf, s.t, e.timeStamp);
+});
+
+fieldEl.addEventListener('pointercancel', (e) => { touchStarts.delete(e.pointerId); });
+
 modeHelp.addEventListener('click', (e) => {
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
   const act = e.target.closest('[data-act]');
@@ -726,7 +762,8 @@ function frame() {
   drawTrail();
   if (recorder && state === 'scored') drawRecDot(now);
   if (state === 'armed') drawCountIn(now);
-  if (S.input !== 'camera') drawKeysHint();
+  if (S.input === 'touch') drawTouchHint();
+  else if (S.input === 'keys') drawKeysHint();
 }
 
 // The webcam IS the stage: full-screen mirrored feed, dimmed under the
@@ -970,6 +1007,22 @@ function drawKeysHint() {
   ctx.fillText('left hand: W A S D · right hand: arrow keys', W / 2, H - 24);
 }
 
+function drawTouchHint() {
+  // Faint centre divider so the hand split reads at a glance, plus a caption.
+  ctx.strokeStyle = 'rgba(86, 92, 102, .25)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 8]);
+  ctx.beginPath();
+  ctx.moveTo(W / 2, H * 0.14);
+  ctx.lineTo(W / 2, H - 40);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#565c66';
+  ctx.font = '12px ui-monospace, Menlo, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('swipe to cut · left half = left hand · right half = right hand', W / 2, H - 24);
+}
+
 // ---- scoring / submit (house pattern) ----
 
 function scoreWith(r, tSec) {
@@ -1169,7 +1222,7 @@ function applySetting(mut) {
   buildConfig();
   syncSheet();
   if (S.input === 'camera' && !camWanted) camInit();
-  if (S.input === 'keys' && camWanted) camStop();
+  if (S.input !== 'camera' && camWanted) camStop();
   toPractice(); // config change -> new variant
 }
 
@@ -1219,7 +1272,7 @@ async function applyCfgParam() {
     const v = (vs.variants || vs || []).find((x) => x.config_hash === hash && x.environment === 'beat-hands');
     if (!v) return;
     const c = typeof v.config === 'string' ? JSON.parse(v.config) : v.config;
-    if (c.input === 'keys' || c.input === 'camera') S.input = c.input;
+    if (['keys', 'camera', 'touch'].includes(c.input)) S.input = c.input;
     if (c.directions === 4 || c.directions === 8) S.dirs = c.directions;
     if (c.tempo_npm) S.tempo = c.tempo_npm;
     if (c.hit_window_ms) S.window = c.hit_window_ms;

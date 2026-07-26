@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bit-rate — controller check</title>
+<style>
+  :root {
+    --bg: #101216; --fg: #d7dae0; --dim: #565c66; --faint: #2a2e36;
+    --accent: #e0b452; --live: #58b368; --caret: #7aa2f7; --err: #e05252;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--mono);
+    display: flex; justify-content: center; padding: 5vh 20px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #wrap { width: 100%; max-width: 760px; }
+  h1 { font-size: 15px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); font-weight: normal; }
+  #status { margin-top: 10px; font-size: 16px; }
+  #status.live { color: var(--live); }
+  #status.wait { color: var(--accent); }
+  #status .id { color: var(--dim); font-size: 13px; }
+  #pad { display: block; width: 100%; height: auto; margin: 20px 0 8px; }
+  #symline { font-size: 20px; min-height: 28px; }
+  #symline b { color: var(--fg); }
+  #symline .l { color: var(--caret); } #symline .r { color: var(--live); }
+  #symline .sub { color: var(--dim); font-size: 14px; }
+  #buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0; }
+  .btn { font-size: 11px; color: var(--dim); border: 1px solid var(--faint); border-radius: 4px; padding: 3px 7px; min-width: 34px; text-align: center; }
+  .btn.on { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+  #help { color: var(--dim); font-size: 13px; line-height: 1.7; border-top: 1px solid var(--faint); padding-top: 16px; margin-top: 8px; }
+  #help b { color: var(--fg); font-weight: normal; }
+  #raw { color: var(--faint); font-size: 11px; margin-top: 14px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <h1>controller check</h1>
+    <div id="status" class="wait">press any button on your controller to connect…</div>
+    <canvas id="pad" width="760" height="360"></canvas>
+    <div id="symline"><span class="sub">two-stick symbol appears here once a stick is pushed</span></div>
+    <div id="buttons"></div>
+    <div id="help">
+      <b>Connecting</b> (works over plain HTTP — Mac or iPad, no HTTPS needed):<br>
+      • <b>Bluetooth:</b> pair the controller in the OS — Xbox Series (hold ⧉ + pair button) or DualSense/DualShock (hold PS + Share) → System Settings ▸ Bluetooth / iPad Settings ▸ Bluetooth.<br>
+      • <b>USB:</b> just plug it in.<br>
+      • Then <b>press any button</b> here — browsers hide the gamepad until you do.<br>
+      • Both sticks read as an 8-point direction (deadzone in the middle). Left × right = <b>8×8 = 64</b> combos ≈ <b>5.98 bits</b> per two-stick event.
+    </div>
+    <pre id="raw"></pre>
+  </div>
+
+<script>
+'use strict';
+const cv = document.getElementById('pad');
+const ctx = cv.getContext('2d');
+const statusEl = document.getElementById('status');
+const symEl = document.getElementById('symline');
+const btnEl = document.getElementById('buttons');
+const rawEl = document.getElementById('raw');
+
+const DIRS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']; // ↑↗→↘↓↙←↖
+const DEADZONE = 0.4;
+
+// Same quantizer convention as beat-hands: 0 = up, clockwise. y is down.
+function octant(x, y) {
+  if (Math.hypot(x, y) < DEADZONE) return -1;
+  const ang = Math.atan2(-y, x) * 180 / Math.PI; // 0 = right, 90 = up
+  const raw = (90 - ang) / 45;
+  return ((Math.round(raw) % 8) + 8) % 8;
+}
+
+function drawStick(cx, cy, r, x, y, label, oct) {
+  // outer ring
+  ctx.strokeStyle = '#2a2e36'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+  // deadzone ring
+  ctx.strokeStyle = '#20242c';
+  ctx.beginPath(); ctx.arc(cx, cy, r * DEADZONE, 0, Math.PI * 2); ctx.stroke();
+  // 8 labelled points (0 = up, clockwise)
+  ctx.font = '15px ' + getComputedStyle(document.body).fontFamily;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let i = 0; i < 8; i++) {
+    const a = (i * 45 - 90) * Math.PI / 180; // screen angle, 0=up
+    const px = cx + Math.cos(a) * (r + 20);
+    const py = cy + Math.sin(a) * (r + 20);
+    ctx.fillStyle = (i === oct) ? '#e0b452' : '#565c66';
+    ctx.fillText(DIRS[i], px, py);
+  }
+  // label
+  ctx.fillStyle = '#565c66'; ctx.font = '12px ' + getComputedStyle(document.body).fontFamily;
+  ctx.fillText(label, cx, cy - r - 44);
+  // live position dot
+  const dx = cx + x * r, dy = cy + y * r;
+  ctx.strokeStyle = '#2a2e36';
+  ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(dx, dy); ctx.stroke();
+  ctx.fillStyle = oct < 0 ? '#565c66' : (label === 'LEFT STICK' ? '#7aa2f7' : '#58b368');
+  ctx.beginPath(); ctx.arc(dx, dy, 8, 0, Math.PI * 2); ctx.fill();
+}
+
+let btnCount = 0;
+function ensureButtons(n) {
+  if (n === btnCount) return;
+  btnCount = n;
+  btnEl.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const d = document.createElement('div');
+    d.className = 'btn'; d.textContent = i; d.id = 'btn' + i;
+    btnEl.appendChild(d);
+  }
+}
+
+function firstPad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const p of pads) if (p && p.connected) return p;
+  return null;
+}
+
+window.addEventListener('gamepadconnected', (e) => {
+  statusEl.className = 'live';
+  statusEl.innerHTML = 'connected · <span class="id">' + e.gamepad.id + ' · mapping: ' + (e.gamepad.mapping || 'non-standard') + '</span>';
+});
+window.addEventListener('gamepaddisconnected', () => {
+  statusEl.className = 'wait';
+  statusEl.textContent = 'controller disconnected — press a button to reconnect…';
+});
+
+function loop() {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const gp = firstPad();
+  const R = 118, cy = 160;
+  if (!gp) {
+    drawStick(200, cy, R, 0, 0, 'LEFT STICK', -1);
+    drawStick(560, cy, R, 0, 0, 'RIGHT STICK', -1);
+    requestAnimationFrame(loop);
+    return;
+  }
+  if (statusEl.className !== 'live') {
+    statusEl.className = 'live';
+    statusEl.innerHTML = 'connected · <span class="id">' + gp.id + ' · mapping: ' + (gp.mapping || 'non-standard') + '</span>';
+  }
+  const lx = gp.axes[0] || 0, ly = gp.axes[1] || 0, rx = gp.axes[2] || 0, ry = gp.axes[3] || 0;
+  const lo = octant(lx, ly), ro = octant(rx, ry);
+  drawStick(200, cy, R, lx, ly, 'LEFT STICK', lo);
+  drawStick(560, cy, R, rx, ry, 'RIGHT STICK', ro);
+
+  const lTxt = lo < 0 ? '·' : DIRS[lo];
+  const rTxt = ro < 0 ? '·' : DIRS[ro];
+  let sym = '<span class="sub">push both sticks to form a symbol</span>';
+  if (lo >= 0 && ro >= 0) {
+    const idx = lo * 8 + ro;
+    sym = 'symbol <b>' + idx + '</b> / 64 <span class="sub">(' + Math.log2(63).toFixed(2) + ' bits)</span>';
+  }
+  symEl.innerHTML = 'L <span class="l">' + lTxt + '</span> &nbsp; R <span class="r">' + rTxt + '</span> &nbsp; → &nbsp; ' + sym;
+
+  ensureButtons(gp.buttons.length);
+  for (let i = 0; i < gp.buttons.length; i++) {
+    document.getElementById('btn' + i).classList.toggle('on', gp.buttons[i].pressed || gp.buttons[i].value > 0.5);
+  }
+  rawEl.textContent = 'axes: [' + gp.axes.map((a) => a.toFixed(2)).join(', ') + ']';
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>bit-rate — lane-tap</title>
+<link rel="stylesheet" href="game.css">
+<link rel="stylesheet" href="../common/results.css">
+</head>
+<body>
+  <div id="corner">
+    <div id="mode-banner" class="mode-practice">practice</div>
+    <div id="mode-help"></div>
+  </div>
+
+  <div id="hud">
+    <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
+    <div id="hud-time"></div>
+    <div id="hud-counts"></div>
+    <div id="hud-spark" class="hud-spark-host"></div>
+  </div>
+
+  <!-- One canvas: an action strip of N lanes along the bottom edge; upcoming
+       targets stack vertically above it at their lane x-positions (nearest at
+       the bottom) and step down on each tap. Self-paced: the tap is the clock.
+       Cues live above, fingers below — the hand never occludes the lookahead. -->
+  <canvas id="field"></canvas>
+
+  <div id="notice" hidden></div>
+
+  <section id="results" hidden>
+    <div id="res-hero"></div>
+    <div id="res-tiles"></div>
+    <div id="res-charts">
+      <figure>
+        <figcaption>pace — net bits/s per 5&thinsp;s <span class="err-key">▎misses</span></figcaption>
+        <div id="chart-pace"></div>
+      </figure>
+      <figure>
+        <figcaption>gap between selections</figcaption>
+        <div id="chart-iki"></div>
+      </figure>
+    </div>
+    <div id="res-footer">press <b>Enter</b> for a new scored run · <b>Esc</b> for practice</div>
+  </section>
+
+  <div id="overlay" hidden>
+    <div id="card"></div>
+  </div>
+
+  <a id="gallery-link" href="/env/" title="back to all games">← gallery</a>
+
+  <button id="gear" title="settings">⚙ settings</button>
+  <div id="sheet">
+    <div class="sh-row">
+      <span class="sh-label">lanes</span>
+      <div class="seg" id="seg-lanes">
+        <button data-v="9">9</button>
+        <button data-v="13">13</button>
+        <button data-v="17">17</button>
+        <button data-v="21">21</button>
+        <button data-v="26">26</button>
+      </div>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">look-ahead</span>
+      <div class="seg" id="seg-look">
+        <button data-v="3">3</button>
+        <button data-v="5">5</button>
+        <button data-v="8">8</button>
+      </div>
+    </div>
+    <div class="sh-foot" id="sheet-info"></div>
+  </div>
+
+<script src="../common/results.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

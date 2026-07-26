@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>bit-rate — parabola-fall</title>
+<link rel="stylesheet" href="game.css">
+<link rel="stylesheet" href="../common/results.css">
+</head>
+<body>
+  <div id="corner">
+    <div id="mode-banner" class="mode-practice">practice</div>
+    <div id="mode-help"></div>
+  </div>
+
+  <div id="hud">
+    <div id="hud-bps">0.0 <span class="hud-unit">bits/s</span></div>
+    <div id="hud-time"></div>
+    <div id="hud-counts"></div>
+    <div id="hud-spark" class="hud-spark-host"></div>
+  </div>
+
+  <!-- One canvas: a shallow "smile" arc of N lanes at the bottom; dots fall
+       from the top down their lane and cross the arc at a fixed tempo. The
+       thumb rides the arc and must be in the crossing dot's lane. One rAF loop
+       owns the tempo clock and reads the thumb at each crossing. -->
+  <canvas id="field"></canvas>
+
+  <div id="notice" hidden></div>
+
+  <section id="results" hidden>
+    <div id="res-hero"></div>
+    <div id="res-tiles"></div>
+    <div id="res-charts">
+      <figure>
+        <figcaption>pace — net bits/s per 5&thinsp;s <span class="err-key">▎misses</span></figcaption>
+        <div id="chart-pace"></div>
+      </figure>
+      <figure>
+        <figcaption>gap between selections</figcaption>
+        <div id="chart-iki"></div>
+      </figure>
+    </div>
+    <div id="res-footer">press <b>Enter</b> for a new scored run · <b>Esc</b> for practice</div>
+  </section>
+
+  <div id="overlay" hidden>
+    <div id="card"></div>
+  </div>
+
+  <a id="gallery-link" href="/env/" title="back to all games">← gallery</a>
+
+  <button id="gear" title="settings">⚙ settings</button>
+  <div id="sheet">
+    <div class="sh-row">
+      <span class="sh-label">lanes</span>
+      <div class="seg" id="seg-lanes">
+        <button data-v="7">7</button>
+        <button data-v="9">9</button>
+        <button data-v="13">13</button>
+        <button data-v="17">17</button>
+        <button data-v="21">21</button>
+      </div>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">max jump</span>
+      <div class="seg" id="seg-maxstep"></div>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">tempo</span>
+      <div class="seg" id="seg-tempo">
+        <button data-v="90">90/min</button>
+        <button data-v="120">120</button>
+        <button data-v="150">150</button>
+        <button data-v="180">180</button>
+        <button data-v="240">240</button>
+      </div>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">look-ahead</span>
+      <div class="seg" id="seg-look">
+        <button data-v="2">2</button>
+        <button data-v="3">3</button>
+        <button data-v="4">4</button>
+      </div>
+    </div>
+    <div class="sh-row">
+      <span class="sh-label">judge</span>
+      <div class="seg" id="seg-judge">
+        <button data-v="crossing">at crossing</button>
+        <button data-v="window">window mode</button>
+      </div>
+    </div>
+    <div class="sh-row" id="row-window">
+      <span class="sh-label">window</span>
+      <div class="seg" id="seg-window">
+        <button data-v="100">±100 ms</button>
+        <button data-v="150">±150</button>
+        <button data-v="200">±200</button>
+      </div>
+    </div>
+    <div class="sh-foot" id="sheet-info"></div>
+  </div>
+
+<script src="../common/results.js"></script>
+<script src="game.js"></script>
+</body>
+</html>

@@ -175,11 +175,25 @@ body.armed .note.cur { border-color: var(--accent); background: #2a2416; }
   min-height: 20px;
 }
 #level-bar {
+  position: relative;
   display: inline-block;
-  width: 90px;
-  height: 6px;
+  width: 120px;
+  height: 8px;
   border-radius: 3px;
   background: linear-gradient(90deg, var(--live) var(--level, 0%), var(--faint) var(--level, 0%));
+}
+/* Trigger line, fixed at the meter midpoint — the meter is scaled so the live
+   voice level clears the middle exactly when it will register. */
+#level-bar::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  border-radius: 1px;
 }
 #heard-text b { color: var(--fg); font-weight: normal; }
 #heard-text .lowconf { color: var(--accent); }
@@ -217,11 +231,25 @@ body.armed .note.cur { border-color: var(--accent); background: #2a2416; }
 #calib-symbol.captured { border-color: var(--live); color: var(--live); }
 #calib-progress { color: var(--dim); font-size: 13px; }
 #calib-level {
+  position: relative;
   width: 220px;
-  height: 8px;
+  height: 10px;
   border-radius: 4px;
   background: var(--faint);
   overflow: hidden;
+}
+/* Trigger line at the midpoint (see #level-bar) — say the sound loud enough to
+   push the green fill past this line and it will register. */
+#calib-level::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  z-index: 2;
 }
 #calib-level-bar {
   display: block;
@@ -232,6 +260,21 @@ body.armed .note.cur { border-color: var(--accent); background: #2a2416; }
 .c-foot { color: var(--dim); font-size: 13px; }
 
 /* ---- gear + sheet (house style) ---- */
+
+#gallery-link {
+  position: fixed;
+  bottom: 16px;
+  left: 18px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--dim);
+  text-decoration: none;
+  border: 1px solid var(--faint);
+  border-radius: 6px;
+  padding: 6px 12px;
+  z-index: 7;
+}
+#gallery-link:hover { color: var(--fg); border-color: var(--dim); }
 
 #gear {
   position: fixed;
@@ -303,6 +346,42 @@ body.armed .note.cur { border-color: var(--accent); background: #2a2416; }
 #card .row { color: var(--dim); margin-top: 1rem; font-size: 16px; }
 #card .row b { color: var(--fg); font-weight: normal; }
 #card .note { color: var(--dim); margin-top: 1.4rem; font-size: 13px; }
+
+/* Touch-device mic gate (see index.html). Sits above everything so the
+   tap that unlocks getUserMedia/AudioContext is unmissable. */
+#mic-gate {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 14, .92);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 12;
+  padding: 1.5rem;
+}
+#mic-gate-card {
+  text-align: center;
+  max-width: 340px;
+  padding: 2.4rem 2rem;
+  border: 1px solid var(--faint);
+  border-radius: 12px;
+  background: var(--bg);
+}
+#mic-gate-title { color: var(--fg); font-size: 20px; letter-spacing: .04em; }
+#mic-gate-sub { color: var(--dim); font-size: 13px; margin-top: .8rem; line-height: 1.5; }
+#mic-gate-btn {
+  margin-top: 1.6rem;
+  font: inherit;
+  font-size: 16px;
+  color: #111;
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  padding: 14px 28px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+#mic-gate-btn:disabled { opacity: .6; }
 
 /* What the recognizer heard on a miss: outlined dim red, on the heard
    symbol's lane, confidence in small text underneath. */

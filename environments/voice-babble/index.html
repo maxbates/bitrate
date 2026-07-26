@@ -42,7 +42,6 @@
       <button data-v="babble-8">babble 8</button>
       <button data-v="solfege">do–ti</button>
       <button data-v="letters-9">letters 9</button>
-      <button data-v="letters-26">a–z</button>
     </div>
     <div id="calib-symbol"></div>
     <div id="calib-lanes" hidden></div>
@@ -71,6 +70,18 @@
     <div id="card"></div>
   </div>
 
+  <!-- Touch-device mic gate: iOS/iPadOS Safari grants getUserMedia and
+       unlocks the AudioContext only from a user gesture, so on touch we
+       defer mic init until this tap. Desktop never sees it (auto-boots). -->
+  <div id="mic-gate" hidden>
+    <div id="mic-gate-card">
+      <div id="mic-gate-title">tap to enable the microphone</div>
+      <div id="mic-gate-sub">voice babble listens through your mic · everything stays on this device</div>
+      <button id="mic-gate-btn">enable microphone</button>
+    </div>
+  </div>
+
+  <a id="gallery-link" href="/env/" title="back to all games">← gallery</a>
   <button id="gear" title="settings">⚙ settings</button>
   <div id="sheet">
     <div class="sh-row">
@@ -80,7 +91,6 @@
         <button data-v="babble-8">babble 8</button>
         <button data-v="solfege">do–ti</button>
         <button data-v="letters-9">letters 9</button>
-        <button data-v="letters-26">a–z</button>
       </div>
     </div>
     <div class="sh-row" id="row-display">

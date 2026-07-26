@@ -186,6 +186,13 @@ function buildConfig() {
 
 async function startRun(scored) {
   state = 'loading';
+  // Snapshot the alphabet this run is created with. N/BITS are viewport-derived
+  // globals that a mid-run resize (iPad Safari collapsing its toolbar, or an
+  // orientation change) can move under us — but the run is scored by the server
+  // against the config we send *now*, so the client must score against the same
+  // fixed N, not whatever the global has drifted to by submit time. (Sc/Si are
+  // already resize-safe: they compare against run.seq, which is fixed.)
+  const startN = N, startBits = BITS;
   const resp = await fetch('/api/run/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -199,6 +206,8 @@ async function startRun(scored) {
         screen_h: screen.height,
         dpr: devicePixelRatio,
         lang: navigator.language,
+        touch_points: navigator.maxTouchPoints || 0,
+        pointer_coarse: matchMedia('(pointer: coarse)').matches,
       },
     }),
   });
@@ -207,6 +216,8 @@ async function startRun(scored) {
   run = {
     id: data.run_id,
     seq: data.sequence_ints,
+    n: startN,
+    bits: startBits,
     scored,
     started: false,
     t0: 0,
@@ -823,7 +834,9 @@ function onResize() {
 
 function scoreWith(r, tSec) {
   const net = Math.max(r.sc - r.si, 0);
-  return { n: N, sc: r.sc, si: r.si, bps: tSec > 0 ? (BITS * net) / tSec : 0 };
+  // Use the run's own snapshot, never the mutable global (see startRun).
+  const rn = r.n ?? N, rbits = r.bits ?? BITS;
+  return { n: rn, sc: r.sc, si: r.si, bps: tSec > 0 ? (rbits * net) / tSec : 0 };
 }
 
 function elapsedMsOf(r) {
@@ -927,11 +940,11 @@ function renderHud() {
   }
   // Practice: trailing-60 s window, so the figure reflects current skill
   // rather than being dragged down by warm-up.
-  const tr = R.trailingBps(run.keylog, BITS, nowT);
+  const tr = R.trailingBps(run.keylog, run.bits, nowT);
   $('hud-bps').innerHTML = tr.bps.toFixed(1) + ' <span class="hud-unit">bits/s</span>';
   $('hud-time').textContent = Math.floor(nowT / 1000) + 's practice';
   $('hud-counts').textContent = 'Sc ' + tr.sc + ' · Si ' + tr.si + ' · 60s';
-  spark.innerHTML = R.sparkHTML(run.keylog, BITS, nowT);
+  spark.innerHTML = R.sparkHTML(run.keylog, run.bits, nowT);
 }
 
 setInterval(renderHud, 1000);
@@ -960,7 +973,7 @@ function renderResults(opts) {
 
   const m = opts.server && opts.server.metrics;
   $('res-tiles').innerHTML = m ? R.tilesHTML(m, { corrections: false }) : '';
-  $('chart-pace').innerHTML = m && m.selections > 1 ? R.paceChartSVG(m, BITS) : '';
+  $('chart-pace').innerHTML = m && m.selections > 1 ? R.paceChartSVG(m, run.bits ?? BITS) : '';
   $('chart-iki').innerHTML = m && m.selections > 1 ? R.ikiChartSVG(m) : '';
 }
 
@@ -1000,10 +1013,15 @@ window.pixelDebug = {
   state: () => state,
   config: () => CONFIG,
   counts: () => (run ? { sc: run.sc, si: run.si, pos: run.pos } : null),
-  trailingBps: (winMs) => (run && run.started ? R.trailingBps(run.keylog, BITS, elapsedMsOf(run), winMs) : null),
-  sparkSeries: () => (run && run.started ? R.sparkSeries(run.keylog, BITS, elapsedMsOf(run)) : null),
+  trailingBps: (winMs) => (run && run.started ? R.trailingBps(run.keylog, run.bits, elapsedMsOf(run), winMs) : null),
+  sparkSeries: () => (run && run.started ? R.sparkSeries(run.keylog, run.bits, elapsedMsOf(run)) : null),
   targetCell: () => (run && run.pos < run.seq.length ? run.seq[run.pos] : null),
   previewCount: () => previewEls.filter((e) => !e.hidden).length,
+  // test-only: the N the client would report for this run, and a way to force
+  // the global alphabet to drift (simulating a mid-run iPad viewport change).
+  scoreN: () => (run ? scoreWith(run, 60).n : null),
+  globalN: () => N,
+  _forceN: (nn) => { N = nn; BITS = Math.log2(nn - 1); },
   // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
   // current input mode) — exercises the same handler a finger/mouse would.
   tapCell: (idx, type) => {

@@ -126,6 +126,8 @@ async function startRun(scored) {
         screen_h: screen.height,
         dpr: devicePixelRatio,
         lang: navigator.language,
+        touch_points: navigator.maxTouchPoints || 0,
+        pointer_coarse: matchMedia('(pointer: coarse)').matches,
       },
     }),
   });

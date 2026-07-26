@@ -1,13 +1,12 @@
-/* beat-hands — paced notes, webcam swipes (spec §5). House dark theme,
-   system font stack only (spec §4.2). The field is one canvas; DOM carries
-   the corner cluster, HUD, notice, results, and settings sheet. */
+/* twin-stick — dual-analog controller game (spec §5). House dark theme,
+   system mono only (§4.2). The field is one canvas; DOM carries the corner
+   cluster, HUD, notice, results, and settings sheet (mirrors beat-hands). */
 
 :root {
   --bg: #101216;
   --fg: #d7dae0;
   --dim: #565c66;
   --faint: #2a2e36;
-  --ok: #8a9199;
   --err: #e05252;
   --err-bg: #3a1d1d;
   --accent: #e0b452;
@@ -29,19 +28,8 @@ body {
   user-select: none;
 }
 
-/* canvas is a replaced element: inset alone keeps its intrinsic 300x150 —
-   width/height must be explicit to fill the viewport */
-#field {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  /* touch-swipe input: swipes must not scroll, zoom, or flash a tap-highlight */
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-  -webkit-touch-callout: none;
-}
+/* canvas is a replaced element: width/height must be explicit to fill */
+#field { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
 #corner { position: fixed; top: 14px; left: 18px; z-index: 5; }
 #mode-banner {
@@ -111,16 +99,6 @@ body {
   gap: 1.6rem;
 }
 #res-hero { text-align: center; }
-#res-video-wrap { text-align: center; }
-#res-video {
-  max-width: min(640px, 76vw);
-  border: 1px solid var(--faint);
-  border-radius: 10px;
-  display: block;
-}
-#res-video-wrap figcaption { margin-top: 8px; font-size: 12px; }
-#res-video-wrap a { color: var(--dim); text-decoration: none; }
-#res-video-wrap a:hover { color: var(--fg); }
 .res-title { color: var(--dim); font-size: 13px; letter-spacing: .15em; text-transform: uppercase; }
 .res-bps { font-size: 64px; margin-top: .6rem; }
 .res-bps span { font-size: 20px; color: var(--dim); }
@@ -131,7 +109,7 @@ body {
 #res-footer { color: var(--dim); font-size: 13px; margin-top: .4rem; }
 #res-footer b { color: var(--fg); font-weight: normal; }
 
-/* ---- error overlay ---- */
+/* ---- error / no-controller overlay ---- */
 
 #overlay {
   position: fixed;
@@ -148,9 +126,10 @@ body {
   border: 1px solid var(--faint);
   border-radius: 12px;
   background: var(--bg);
+  max-width: 560px;
 }
 #card .title { color: var(--dim); font-size: 14px; letter-spacing: .15em; text-transform: uppercase; margin-bottom: 1rem; }
-#card .row { color: var(--dim); margin-top: 1rem; font-size: 16px; }
+#card .row { color: var(--dim); margin-top: 1rem; font-size: 16px; line-height: 1.6; }
 #card .row b { color: var(--fg); font-weight: normal; }
 #card .note { color: var(--dim); margin-top: 1.4rem; font-size: 13px; }
 
