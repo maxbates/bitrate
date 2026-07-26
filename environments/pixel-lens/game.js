@@ -171,11 +171,12 @@ let mouse = { x: -1000, y: -1000, inField: false };
 
 // ---- config from viewport ----
 
-function buildConfig() {
+// How many cells of a given size fit in the field, and what one selection is
+// therefore worth. buildConfig() and the size picker both go through this, so
+// the number the picker promises is the number the game delivers.
+function gridMetrics(mm) {
   const loupeOn = inputMode === 'mouse';
-  const cell = Math.max(6, Math.round(cellMm * PX_PER_MM));
-  // Drives the touch-mode space reclaim in CSS; set before measuring the field.
-  document.body.classList.toggle('touch', !loupeOn);
+  const cell = Math.max(6, Math.round(mm * PX_PER_MM));
   const r = fieldEl.getBoundingClientRect();
   // Inset the grid from the field edges. Mouse mode keeps a lens-radius margin
   // so the loupe is never buried more than ~40% at a boundary target. Touch has
@@ -184,9 +185,19 @@ function buildConfig() {
   const pad = loupeOn ? Math.round(loupeR * 0.6) : 4;
   const cols = Math.max(2, Math.floor((r.width - 2 * pad) / cell));
   const rows = Math.max(2, Math.floor((r.height - 2 * pad) / cell));
-  const ox = Math.round((r.width - cols * cell) / 2);
-  const oy = Math.round((r.height - rows * cell) / 2);
-  grid = { cols, rows, cell, ox, oy, w: r.width, h: r.height };
+  const n = cols * rows; // no correction key in this environment
+  return { cell, pad, cols, rows, n, bits: Math.log2(n - 1), w: r.width, h: r.height };
+}
+
+function buildConfig() {
+  const loupeOn = inputMode === 'mouse';
+  // Drives the touch-mode space reclaim in CSS; set before measuring the field.
+  document.body.classList.toggle('touch', !loupeOn);
+  const m = gridMetrics(cellMm);
+  const { cell, cols, rows } = m;
+  const ox = Math.round((m.w - cols * cell) / 2);
+  const oy = Math.round((m.h - rows * cell) / 2);
+  grid = { cols, rows, cell, ox, oy, w: m.w, h: m.h };
   const ga = $('gridarea');
   ga.style.left = ox + 'px';
   ga.style.top = oy + 'px';
@@ -202,8 +213,8 @@ function buildConfig() {
   lensMag = zoomMode === 'auto'
     ? Math.min(8, Math.max(2, ZOOM_TARGET_MM / cellMm))
     : zoomMode;
-  N = cols * rows; // no correction key in this environment
-  BITS = Math.log2(N - 1);
+  N = m.n;
+  BITS = m.bits;
   CONFIG = {
     environment: ENV_NAME,
     alphabet_size: N,
@@ -218,7 +229,7 @@ function buildConfig() {
     loupe_r_px: loupeOn ? loupeR : 0,
     loupe_mag: loupeOn ? Math.round(lensMag * 100) / 100 : 0,
     loupe_zoom_mode: loupeOn ? String(zoomMode) : 'off',
-    grid_pad_px: pad,
+    grid_pad_px: m.pad,
     viewport_w: Math.round(window.innerWidth),
     viewport_h: Math.round(window.innerHeight),
     error_policy: 'advance',
@@ -229,6 +240,7 @@ function buildConfig() {
   };
   DURATION_MS = CONFIG.duration_s * 1000;
   renderCfg();
+  refreshSizePicker(); // keep the picker's promised numbers true
 }
 
 // The middle of the header: what this variant is set to, with the settings
@@ -1190,16 +1202,33 @@ applyCfgParam().then(() => startRun(false)).catch(showError);
 // with the sizes drawn at their real physical size rather than named in
 // millimetres nobody can picture. Everything after this is the settings sheet.
 
+// Each option priced with what it actually yields here: the grid that fits on
+// this screen and the bits one selection is then worth. Rebuilt from
+// buildConfig() (below) because the band settles after boot — a promise made
+// against a stale layout is a promise the game won't keep.
+function sizeOptionsHTML() {
+  // Nine samples; the CSS shows a 2x2 of them on a phone, where a 3x3 of
+  // real-size tiles is most of the screen.
+  const cells = new Array(9).fill('<i></i>').join('');
+  return CELL_OPTS[inputMode].map((mm) => {
+    const m = gridMetrics(mm);
+    return '<button type="button" class="sp-opt" data-v="' + mm + '">' +
+      '<span class="sp-grid" style="--c:' + m.cell + 'px">' + cells + '</span>' +
+      '<span class="sp-size">' + mm + ' mm</span>' +
+      '<span class="sp-rate">' + m.cols + '×' + m.rows + ' · <b>' + m.bits.toFixed(2) +
+      '</b> bits/' + (inputMode === 'touch' ? 'tap' : 'click') + '</span>' +
+      '</button>';
+  }).join('');
+}
+
+function refreshSizePicker() {
+  const host = document.querySelector('#size-pick .sp-opts');
+  if (host) host.innerHTML = sizeOptionsHTML();
+}
+
 function showSizePicker() {
   const wrap = document.createElement('div');
   wrap.id = 'size-pick';
-  const opts = CELL_OPTS[inputMode].map((mm) => {
-    const px = Math.max(6, Math.round(mm * PX_PER_MM));
-    const cells = new Array(9).fill('<i></i>').join('');
-    return '<button type="button" class="sp-opt" data-v="' + mm + '">' +
-      '<span class="sp-grid" style="--c:' + px + 'px">' + cells + '</span>' +
-      '<span class="sp-size">' + mm + ' mm</span></button>';
-  }).join('');
   wrap.innerHTML =
     '<div class="sp-card">' +
     '<div class="sp-title">how big should the tiles be?</div>' +
@@ -1208,7 +1237,7 @@ function showSizePicker() {
       ? 'pick what your finger can hit first try. smaller tiles mean more of them — more bits per tap — right up until you start missing.'
       : 'pick what you can click without aiming. smaller cells mean more of them — more bits per click — until the pointing costs more than the bits are worth.') +
     '</div>' +
-    '<div class="sp-opts">' + opts + '</div>' +
+    '<div class="sp-opts">' + sizeOptionsHTML() + '</div>' +
     '<div class="sp-note">you can change this any time — <b>settings</b>, during practice</div>' +
     '</div>';
   document.body.appendChild(wrap);
