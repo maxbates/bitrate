@@ -481,8 +481,12 @@ fieldEl.addEventListener('pointerdown', (e) => {
   if (verdict) run.sc++;
   else run.si++;
   // Feedback: touch has no loupe border to flash, so pop a ring at the tap
-  // point; mouse keeps the loupe-rim flash on a miss.
-  if (inputMode === 'touch') tapFlash(x, y, verdict);
+  // point; mouse keeps the loupe-rim flash on a miss. Landing on a green
+  // look-ahead dot is a distinct mistake — acting on "next" as if it were
+  // "now" — so it gets a much louder red reaction in either input mode.
+  const early = !verdict && isPreviewCell(cell);
+  if (early) earlyFlash(x, y);
+  else if (inputMode === 'touch') tapFlash(x, y, verdict);
   else if (!verdict) missFlash();
   if (!verdict) errorBuzz();
 
@@ -514,9 +518,41 @@ fieldEl.addEventListener('pointerup', (e) => {
   if (last.t_keyup_ms === null) last.t_keyup_ms = e.timeStamp - run.t0;
 });
 
-function missFlash() {
+function missFlash(strong) {
   loupeEl.style.borderColor = 'var(--err)';
-  setTimeout(() => { loupeEl.style.borderColor = ''; }, 160);
+  if (strong) loupeEl.style.boxShadow = '0 0 0 3px rgba(224, 82, 82, .45), 0 0 30px 8px rgba(224, 82, 82, .35)';
+  setTimeout(() => {
+    loupeEl.style.borderColor = '';
+    loupeEl.style.boxShadow = '';
+  }, strong ? 300 : 160);
+}
+
+// Was the tap on one of the visible look-ahead dots? Only the previews
+// actually on screen count — a cell that happens to be further down the
+// sequence isn't something the player could have been reacting to.
+function isPreviewCell(cell) {
+  for (let k = 0; k < previewDepth; k++) {
+    const si = run.pos + 1 + k;
+    if (si >= run.seq.length) break;
+    if (run.seq[si] === cell) return true;
+  }
+  return false;
+}
+
+// The loudest error in the game: a big red burst at the tap point plus a red
+// pulse around the field. Deliberately more than an ordinary near-miss, so
+// "you tapped the green one" is unmistakable at a glance.
+function earlyFlash(x, y) {
+  const el = document.createElement('div');
+  el.className = 'tap-flash early';
+  el.style.left = x + 'px';
+  el.style.top = y + 'px';
+  fieldEl.appendChild(el);
+  setTimeout(() => el.remove(), 520);
+  fieldEl.classList.remove('err-pulse');
+  void fieldEl.offsetWidth; // restart the pulse on back-to-back early taps
+  fieldEl.classList.add('err-pulse');
+  if (inputMode === 'mouse') missFlash(true);
 }
 
 // ---- audio feedback: WebAudio only, no files (spec §4.1) ----
@@ -1212,6 +1248,10 @@ window.pixelDebug = {
   scoreN: () => (run ? scoreWith(run, 60).n : null),
   globalN: () => N,
   _forceN: (nn) => { N = nn; BITS = Math.log2(nn - 1); },
+  // Live look-ahead cells, and whether the last tap triggered the loud
+  // "you hit the green dot" reaction.
+  previewCells: () => (run ? run.seq.slice(run.pos + 1, run.pos + 1 + previewDepth) : []),
+  earlyFlashCount: () => fieldEl.querySelectorAll('.tap-flash.early').length,
   // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
   // current input mode) — exercises the same handler a finger/mouse would.
   tapCell: (idx, type) => {
