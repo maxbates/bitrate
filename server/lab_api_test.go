@@ -3,9 +3,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
+
+	"bitrate"
 )
 
 func getJSON[T any](t *testing.T, url string) T {
@@ -145,5 +149,32 @@ func TestRunDetailAndExport(t *testing.T) {
 	var ksMap map[string][]Selection
 	if err := json.Unmarshal(export["keystrokes"], &ksMap); err != nil || len(ksMap[id]) == 0 {
 		t.Fatalf("export keystrokes: %v", err)
+	}
+}
+
+// The brief is served whole and as a real PDF — a truncated or mistyped
+// embed would still 200, so check the magic bytes and the full length.
+func TestAssignmentPDF(t *testing.T) {
+	_, ts := newTestServer(t)
+	resp, err := http.Get(ts.URL + "/assignment.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/pdf" {
+		t.Fatalf("Content-Type %q, want application/pdf", ct)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(body, []byte("%PDF-")) {
+		t.Fatalf("body is not a PDF (first bytes: %q)", body[:min(8, len(body))])
+	}
+	if len(body) != len(bitrate.AssignmentPDF) {
+		t.Fatalf("served %d bytes, embedded %d", len(body), len(bitrate.AssignmentPDF))
 	}
 }

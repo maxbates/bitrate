@@ -8,6 +8,7 @@ package main
 //	GET /api/variants      registry
 //	GET /api/runs/{id}     run + result (metrics); ?keystrokes=1 for the log
 //	GET /api/export        JSON bundle for backup/merge
+//	GET /assignment.pdf    the homework brief this harness was built against
 //
 // The leaderboard is a query, not a table: best bps per (device, variant)
 // over scored, completed, verified runs; ties broken by earlier timestamp.
@@ -16,6 +17,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
@@ -24,6 +26,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	"bitrate"
 )
 
 func (s *server) registerLabRoutesImpl(mux *http.ServeMux) {
@@ -32,6 +37,18 @@ func (s *server) registerLabRoutesImpl(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/runs/{id}", s.handleRunDetail)
 	mux.HandleFunc("GET /api/export", s.gateExport(s.handleExport))
 	mux.HandleFunc("GET /api/export.csv", s.gateExport(s.handleExportCSV))
+	mux.HandleFunc("GET /assignment.pdf", handleAssignmentPDF)
+}
+
+// handleAssignmentPDF serves the embedded brief. ServeContent (rather than a
+// bare Write) gets Content-Type, Range support and conditional requests for
+// free — the file is ~120 KB and never changes, so it caches well. modtime is
+// zero because an embedded byte slice has none; that just suppresses
+// Last-Modified.
+func handleAssignmentPDF(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Disposition", `inline; filename="assignment.pdf"`)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	http.ServeContent(w, r, "assignment.pdf", time.Time{}, bytes.NewReader(bitrate.AssignmentPDF))
 }
 
 // gateExport protects the full-dataset dumps — which include the quasi-biometric
