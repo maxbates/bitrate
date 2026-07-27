@@ -6,21 +6,29 @@ copy branches, the two hypothetical bit rates against an independent reference,
 all four dismissal paths, that the figures are static once shown, that the
 banner never eats a tap or moves N, and that pixel lens never shows it.
 
-Tier B: Playwright lives here and never ships (spec §4.1). Not wired into CI or
-the pre-push hook — CI has no browser — so it is run by hand against a dev
-server:
+Tier B: Playwright lives here and never ships (spec §4.1). Wired into the gate
+workflow, which does install Chromium; with no argument it builds and launches
+its own server, exactly like the other suites here.
 
-    ./run.sh &                      # or: go run ./server -dev -addr 127.0.0.1:4712
     pip install -r requirements.txt && playwright install chromium
-    python acc_hint_test.py http://127.0.0.1:4712
+    python acc_hint_test.py                       # launches its own server
+    python acc_hint_test.py http://127.0.0.1:4712 # or drive one already running
 
 It drives the real UI through the pixelDebug hooks; it answers "is it correct",
 never "is it better" (spec §7 — nothing here may rank variants).
 """
+import atexit
 import json, sys
 from playwright.sync_api import sync_playwright
 
-URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:4712"
+from synthetic_player import launch_server
+
+if len(sys.argv) > 1:
+    URL = sys.argv[1]
+else:
+    _proc, URL = launch_server()
+    atexit.register(_proc.kill)
+URL = URL.rstrip("/")
 fails = []
 
 def check(name, ok, detail=""):

@@ -663,13 +663,26 @@ fieldEl.addEventListener('pointerdown', (e) => {
   // Drum pad's whole claim is that a finger did this. A mouse click landing in
   // a scored run invalidates it, the same as losing the window — the run can't
   // stand, and silently scoring it would put a cursor run on a touch board.
+  //
+  // Practice is the opposite case and used to be wrong: this branch returned
+  // unconditionally, so a click was warned about and then *dropped*, while
+  // `run.started` had already been set above — the practice clock started and
+  // nothing ever registered against it. Meanwhile `#device-warn` promises, in
+  // so many words, "practise with the mouse if you like, but a scored run has
+  // to be tapped". The copy was right and the code contradicted it.
   if (touchRequired() && !isTouchLike(e.pointerType)) {
-    if (run.scored && run.started) { abortScoredRun('mouse_input'); return; }
-    if (state === 'armed') { toPractice(); }
-    run.mouseSeen = true;
-    showNotice('drum pad is the touch game — that was a <b>' + e.pointerType +
-      '</b>. tap the grid to play; scored runs need a touchscreen.', 'warn', 5000);
-    return;
+    // An armed run became a scored one a few lines above, so this catches the
+    // arm-then-click case too.
+    if (run.scored) { abortScoredRun('mouse_input'); return; }
+    // Once per bout, not once per click: a 5 s toast on every selection would
+    // sit on top of the grid for the whole practice run.
+    if (!run.mouseSeen) {
+      run.mouseSeen = true;
+      run.flags.mouse_practice = true; // so analysis never reads it as a tapped run
+      showNotice('drum pad is the touch game — that was a <b>' + e.pointerType +
+        '</b>. practice works with a click; a scored run has to be tapped.', 'warn', 5000);
+    }
+    // ...and fall through: the click plays.
   }
   if (isTouchLike(e.pointerType)) run.touchSeen = true;
 

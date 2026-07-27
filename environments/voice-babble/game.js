@@ -308,7 +308,19 @@ function absFloor() {
 // are still dropped downstream by MIN_FRAMES, so this doesn't leak steady
 // noise in.
 const TRIGGER_MULT = 1.8;
-function onsetThreshold() { return Math.max(seg.noiseFloor * TRIGGER_MULT, absFloor()); }
+function onsetThreshold() {
+  const t = Math.max(seg.noiseFloor * TRIGGER_MULT, absFloor());
+  // Same rule as the measured floor, applied to the *live* threshold: never
+  // above a level the player's voice was measured actually reaching. In a loud
+  // or AGC-flattened room the adaptive term climbs past their own volume — the
+  // floor tracks the din, the din is close to the voice, and the game goes
+  // deaf with the meter looking healthy. The measurement is the one thing that
+  // gives us a real upper bound, so use it.
+  const ceiling = sensName === 'auto' && measured && measured.speech > 0
+    ? measured.speech * NOISY_MAX_FRAC
+    : Infinity;
+  return Math.min(t, ceiling);
+}
 
 // The noise floor gates itself: every non-triggering frame used to be folded
 // into it at one rate, so a sound that ramped in under the trigger dragged the
@@ -481,7 +493,10 @@ function updateLevel(rms) {
 // noise-opened segments and are worse than useless.
 
 const LV = {
-  SETTLE_MS: 500,     // let the room (and the player) settle before measuring
+  // A Bluetooth headset switches profile when the stream opens and needs a
+  // second or so before its levels mean anything; 500 ms measured the settling
+  // transient as if it were the room.
+  SETTLE_MS: 1200,
   AMBIENT_MS: 1200,
   SPEAK_MAX_MS: 5000,
   PHRASE: ['one', 'two', 'three', 'four', 'five'],
@@ -497,6 +512,16 @@ const LV = {
 // voiced peak, where an unstressed syllable and an onset ramp live.
 const AMB_MULT = 2.5;
 const SPEECH_FRAC = 0.28;
+// Hard ceiling on the trigger, as a fraction of the voiced peak we just
+// measured. A threshold ABOVE a level the player's voice actually reached is
+// not "strict", it is dead: nothing they do can ever register. The noisy
+// fallback below could produce exactly that — at 5 dB of headroom
+// `ambient·2.5` works out to 1.4× the voice — which is how an AirPods user
+// ended up with a mic check that never heard them.
+const NOISY_MAX_FRAC = 0.55;
+// If the dedicated silent window reads this much hotter than the gaps inside
+// the phrase, the capture chain is running its own gain control (see below).
+const PROCESSED_DB = 5;
 // A stale threshold from a different room is worse than none, and re-measuring
 // costs four seconds — so it expires rather than following the player around.
 const LEVEL_MAX_AGE_MS = 6 * 3600 * 1000;
@@ -523,10 +548,14 @@ const dbfs = (r) => 20 * Math.log10(Math.max(r, 1e-7));
 const DB_FLOOR = -66;
 const dbPct = (r) => Math.max(0, Math.min(100, ((dbfs(r) - DB_FLOOR) / -DB_FLOOR) * 100));
 
-function median(xs) {
+function pctl(xs, p) {
   if (!xs.length) return 0;
   const s = xs.slice().sort((a, b) => a - b);
-  return s[Math.floor(s.length / 2)];
+  return s[Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))))];
+}
+
+function median(xs) {
+  return pctl(xs, 0.5);
 }
 
 // The typical voiced peak, not the single loudest sample: median of the top
@@ -601,11 +630,14 @@ function levelFrame(f) {
 // Push the buffered frames back through the live segmenter with a candidate
 // threshold and count what it would have opened. `seg` is saved and restored
 // so the real state machine is untouched.
-function replaySyllables(frames, thr, ambient) {
+function replaySyllables(frames, thr, ambient, speech) {
   const savedSeg = Object.assign({}, seg);
   const savedMeasured = measured, savedSens = sensName;
   sensName = 'auto';
-  measured = { thr };
+  // `speech` too, so the replay sees the same voice-derived ceiling in
+  // onsetThreshold() that the live run will — otherwise the syllable count is
+  // measuring a threshold the game won't actually use.
+  measured = { thr, speech };
   Object.assign(seg, {
     active: false, frames: [], onsetT: 0, quietFrames: 0, refractory: 0,
     classified: false, noiseFloor: Math.min(NOISE_MAX, ambient), peak: 0,
@@ -628,31 +660,75 @@ function replaySyllables(frames, thr, ambient) {
 function deriveThreshold(ambient, speech) {
   const lo = ambient * AMB_MULT;    // must clear the room
   const hi = speech * SPEECH_FRAC;  // must sit under the quietest syllable
-  // When the band inverts the room is too loud relative to the voice. Fall
-  // back to the room floor: erring toward a missed syllable rather than an
-  // invented selection is the correct direction under double-penalized errors.
+  // When the band inverts, the room is too loud relative to the voice. Erring
+  // toward a missed syllable rather than an invented selection is the right
+  // direction under double-penalized errors — but only up to a point, and the
+  // first cut of this had no such point. `lo` alone can land above the voiced
+  // peak (at 5 dB headroom it is 1.4× it), and a trigger the voice cannot
+  // reach doesn't make the game strict, it makes it deaf. Cap it so a
+  // full-volume syllable always clears: some false triggers in a loud room are
+  // recoverable — the player hears them and moves — while total silence is not.
   const noisy = !(hi > lo);
-  const thr = noisy ? lo : Math.min(Math.max(Math.sqrt(ambient * speech), lo), hi);
+  const thr = noisy
+    ? Math.min(lo, speech * NOISY_MAX_FRAC)
+    : Math.min(Math.max(Math.sqrt(ambient * speech), lo), hi);
   return { thr, noisy, snrDb: dbfs(speech) - dbfs(ambient) };
 }
 
 // Pure over its frame buffers (replaySyllables saves and restores `seg`), so
 // the synthetic harness can exercise the whole measurement without a mic.
 function computeLevel(ambientFrames, speechFrames) {
-  const ambient = Math.max(median(ambientFrames.map((f) => f.rms)), 1e-6);
-  const speech = voicedLevel(speechFrames.map((f) => f.rms));
+  const speechRms = speechFrames.map((f) => f.rms);
+  const speech = voicedLevel(speechRms);
+
+  // The room, measured two ways, because they fail in opposite directions.
+  //
+  //   quiet window — a dedicated 1.2 s of silence. Honest on a plain mic.
+  //   phrase gaps  — a low percentile of the *speech* window, which lands in
+  //     the four pauses of "one two three four five".
+  //
+  // The gaps exist because of AirPods. A Bluetooth headset runs over HFP with
+  // the OS's own gain control, and `autoGainControl: false` cannot reach it
+  // from a web page — the constraint is honoured by the browser, not by the
+  // Bluetooth stack. AGC's whole job is to make quiet things loud: through a
+  // silent window it winds the gain *up*, so the "room" reads hot, then pulls
+  // it down over speech. The two windows are then measured at different gains
+  // and the ratio between them is meaningless — squashed toward 1, which is
+  // how a user talking loudly into AirPods got 5 dB of headroom and a trigger
+  // above their own voice. Reading the room from inside the same window as the
+  // voice puts both under the same gain, so the ratio is real again.
+  //
+  // Take the lower of the two: a room reading that is too low is corrected by
+  // the upper clamp and by the live `noiseFloor · TRIGGER_MULT` term, while one
+  // that is too high sets the trigger out of the player's reach and the game
+  // simply stops responding.
+  const quiet = Math.max(median(ambientFrames.map((f) => f.rms)), 1e-6);
+  const gaps = Math.max(pctl(speechRms, 0.15), 1e-6);
+  const ambient = Math.max(Math.min(quiet, gaps), 1e-6);
+  // A silent window much hotter than the pauses in continuous speech is the
+  // AGC signature. Worth naming, because "move somewhere quieter" is actively
+  // wrong advice for someone sitting in a silent room wearing earbuds.
+  const processed = dbfs(quiet) - dbfs(gaps) > PROCESSED_DB;
+
+  const d = deriveThreshold(ambient, speech);
+
   // "Did anything reach the mic" is a *separate*, gentler question from "has
   // the phrase finished" (LV.MIN_VOICED, 3x, used only to end the window
   // early). Sharing one gate made a merely noisy room — where the voice sits
   // only ~10 dB over the din, so few frames clear 3x — report itself as a dead
   // microphone, which is the wrong advice entirely.
-  const heard = speechFrames.filter((f) => f.rms > ambient * 2).length;
+  //
+  // Ask it against the threshold we just derived rather than a fixed multiple
+  // of the room: those are the same question ("will this player's voice
+  // register?"), and any fixed multiple repeats the original mistake — at 5 dB
+  // of headroom even `ambient · 2` sits above the voice, so a perfectly
+  // audible speaker was written off as a dead mic.
+  const heard = speechFrames.filter((f) => f.rms > d.thr).length;
   const heardNothing = heard < LV.MIN_HEARD || speech <= ambient * 1.5;
-  const d = deriveThreshold(ambient, speech);
-  const syllables = heardNothing ? 0 : replaySyllables(speechFrames, d.thr, ambient);
+  const syllables = heardNothing ? 0 : replaySyllables(speechFrames, d.thr, ambient, speech);
   return {
     ambient, speech, thr: d.thr, snrDb: d.snrDb, syllables,
-    noisy: d.noisy, heardNothing,
+    noisy: d.noisy, heardNothing, processed, quiet, gaps,
     clean: !heardNothing && !d.noisy && syllables === LV.PHRASE.length,
   };
 }
@@ -734,9 +810,15 @@ function renderLevelPanel() {
       ' · voice <b>' + dbfs(r.speech).toFixed(0) + ' dB</b>' +
       ' · headroom <b>' + r.snrDb.toFixed(0) + ' dB</b><br>' +
       'trigger set to <b>' + dbfs(r.thr).toFixed(0) + ' dB</b> · ' + counted +
-      (r.noisy
-        ? '<br><span class="warn">too much background noise for your voice level — move somewhere quieter, or speak up. quiet sounds may be missed.</span>'
-        : r.syllables > LV.PHRASE.length
+      (r.noisy && r.processed
+        // Naming the cause matters: this player is usually in a silent room,
+        // and telling them to find a quieter one sends them chasing nothing.
+        ? '<br><span class="warn">your microphone is doing its own noise processing — common on Bluetooth headsets like AirPods, and it flattens the gap between your voice and the room.</span>' +
+          '<br>using a best-effort trigger. if sounds get missed, switch to the built-in microphone and re-check.'
+        : r.noisy
+          ? '<br><span class="warn">too much background noise for your voice level — move somewhere quieter, or speak up. quiet sounds may be missed.</span>' +
+            '<br>on a Bluetooth headset? the built-in microphone usually does better here.'
+          : r.syllables > LV.PHRASE.length
           ? '<br>extra words usually means background noise — try again somewhere quieter'
           : r.syllables < LV.PHRASE.length
             ? '<br>say the words a little louder, with a small gap between each'
@@ -1504,14 +1586,20 @@ window.voiceDebug = {
   // Synthesize an ambient window plus `words` bursts at `speech` RMS and run
   // the real measurement over them: same percentiles, same threshold algebra,
   // same segmenter replay. This is how the level check is regression-tested.
-  measureFake({ ambient = 0.002, speech = 0.05, words = 5, wordMs = 240, gapMs = 140 } = {}) {
+  // `ambientWindow` defaults to `ambient`; set it higher to model a capture
+  // chain whose AGC winds the gain up through the silent window and back down
+  // over speech (Bluetooth headsets), which is what makes the dedicated quiet
+  // window disagree with the pauses inside the phrase.
+  measureFake({ ambient = 0.002, speech = 0.05, words = 5, wordMs = 240, gapMs = 140,
+                ambientWindow = null } = {}) {
     const dt = 1000 / 60;
     let t = 0;
     const mk = (rms) => ({ rms: Math.max(rms, 1e-7), zcr: 0.05, bands: new Array(BANDS).fill(-60), t: (t += dt) });
     const jitter = () => 0.75 + 0.5 * Math.random();
     const amb = () => mk(ambient * jitter());
+    const quietLevel = ambientWindow == null ? ambient : ambientWindow;
     const ambientFrames = [];
-    for (let i = 0; i < Math.round(LV.AMBIENT_MS / dt); i++) ambientFrames.push(amb());
+    for (let i = 0; i < Math.round(LV.AMBIENT_MS / dt); i++) ambientFrames.push(mk(quietLevel * jitter()));
     const speechFrames = [];
     for (let w = 0; w < words; w++) {
       const n = Math.round(wordMs / dt);

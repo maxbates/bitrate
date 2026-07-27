@@ -44,7 +44,18 @@ SCENARIOS = [
     ("noisy room", 0.02, 0.06, 5, {"noisy": True, "heardNothing": False}),
     ("nothing said", 0.002, 0.0021, 5, {"heardNothing": True}),
     ("only three words", 0.0015, 0.06, 3, {"syllables": 3, "clean": False}),
+    # Reported from a real session: AirPods, talking loudly, 5 dB headroom and
+    # the check never heard a word. `ambient·2.5` is 1.4x the voice at that
+    # ratio, so the trigger sat above the loudest frame the player could
+    # produce. A trigger the voice cannot reach is dead, never merely strict.
+    ("airpods, 5 dB headroom", 0.034, 0.06, 5, {"heardNothing": False}),
 ]
+
+# The AGC case, which needs its own frame shape rather than a flat room level:
+# a Bluetooth chain winds the gain up through the silent window and back down
+# over speech, so the dedicated quiet window reads far hotter than the pauses
+# inside the phrase. Measuring the room from those pauses is the fix.
+AGC = {"ambient": 0.002, "speech": 0.05, "words": 5, "ambientWindow": 0.03}
 
 FALLBACK_FLOOR = 0.003  # SENS.med — what `auto` uses before it has measured
 
@@ -93,17 +104,48 @@ def main() -> int:
                 r = page.evaluate("o => window.voiceDebug.measureFake(o)",
                                   {"ambient": amb, "speech": sp, "words": words})
                 bad = [f"{k}={r[k]!r} (wanted {v!r})" for k, v in want.items() if r[k] != v]
-                # The invariant that matters: the trigger clears the room and
-                # sits under the voice.
-                if not r["heardNothing"] and not (r["ambient"] < r["thr"] < r["speech"]):
-                    bad.append(f"trigger {r['thr']:.5f} outside "
-                               f"({r['ambient']:.5f}, {r['speech']:.5f})")
+                # The invariant that must hold everywhere, including rooms too
+                # loud to serve well: the trigger has to be REACHABLE. A
+                # threshold above a level the measured voice actually hit is
+                # dead, not strict — the game cannot respond to anything.
+                if not r["heardNothing"] and not r["thr"] < r["speech"]:
+                    bad.append(f"trigger {r['thr']:.5f} is at or above the voice "
+                               f"{r['speech']:.5f} — nothing could ever register")
+                # In a room with real headroom it should also clear the room.
+                if not r["heardNothing"] and not r["noisy"] \
+                        and not (r["ambient"] < r["thr"]):
+                    bad.append(f"trigger {r['thr']:.5f} below the room {r['ambient']:.5f}")
                 print(f"  {'ok  ' if not bad else 'FAIL'} {name}: "
                       f"room {db(amb):.0f} dB, voice {db(sp):.0f} dB -> "
                       f"trigger {db(r['thr']):.0f} dB, {r['syllables']} syllables, "
                       f"headroom {r['snrDb']:.0f} dB, clean={r['clean']}")
                 if bad:
                     fails.append(f"{name}: " + "; ".join(bad))
+
+            # 2b. The AGC case: a silent window far hotter than the pauses
+            #     inside the phrase. Reading the room from the pauses is what
+            #     keeps the headroom real and the trigger reachable.
+            r = page.evaluate("o => window.voiceDebug.measureFake(o)", AGC)
+            r.setdefault("processed", False)
+            r.setdefault("quiet", r["ambient"])
+            r.setdefault("gaps", r["ambient"])
+            print(f"  {'ok  ' if r['processed'] and r['thr'] < r['speech'] else 'FAIL'} "
+                  f"agc-flattened mic: quiet window {db(r['quiet']):.0f} dB vs "
+                  f"phrase gaps {db(r['gaps']):.0f} dB -> room taken as "
+                  f"{db(r['ambient']):.0f} dB, trigger {db(r['thr']):.0f} dB, "
+                  f"{r['syllables']} syllables, processed={r['processed']}")
+            if not r["processed"]:
+                fails.append("AGC-flattened mic not flagged as processed — the panel "
+                             "would tell a user in a silent room to find a quieter one")
+            if not r["thr"] < r["speech"]:
+                fails.append(f"AGC case: trigger {r['thr']} not reachable by voice {r['speech']}")
+            if r["syllables"] != 5:
+                fails.append(f"AGC case: heard {r['syllables']} of 5 syllables")
+            # Reading the room from the hot silent window instead of the gaps
+            # is the bug being guarded against.
+            if not r["ambient"] < AGC["ambientWindow"] * 0.75:
+                fails.append(f"AGC case: room {r['ambient']} took the inflated quiet "
+                             f"window {AGC['ambientWindow']} rather than the gaps")
 
             # 3. Skippable, and the skip falls back to the middle preset.
             page.evaluate("window.voiceDebug.skipLevel()")

@@ -414,6 +414,29 @@ moving N — same trade as `#device-warn`, minimised by being wide and shallow.
 `left/right: 0; margin-inline: auto; width: fit-content` (`#device-warn` still
 has this bug). Hooks: `pixelDebug.accHintText/accHintSpent/tickAccuracyHint`.
 
+**Fixed 2026-07-27 — two bugs where the code contradicted its own on-screen
+copy.** Both were invisible to every existing test because neither the rule nor
+the prose was wrong on its own — only the two disagreed. **Where a rule is
+stated to the player in prose, treat the prose as a testable assertion.**
+
+- **drum pad with a mouse.** `#device-warn` promises "practise with the mouse if
+  you like, but a scored run has to be tapped"; the pointerdown handler's
+  non-touch branch `return`ed unconditionally, so practice clicks were warned
+  about and *dropped* — and since `run.started`/`t0` are set above that branch,
+  the first click started the practice clock and registered nothing. Practice
+  now plays; scored runs still abort on a mouse, arming still needs a prior tap,
+  the warning fires once per bout, and `run.flags.mouse_practice` marks the run.
+  `lab/drum_pad_mouse_test.py`.
+- **voice babble's mic trigger could sit ABOVE the player's voice.** At 5 dB of
+  headroom the noisy fallback `ambient·2.5` is 1.4× the measured voice — nothing
+  can ever register. Same fixed-multiple mistake in the reach test (`ambient·2`)
+  and in the live `noiseFloor·1.8` term. **A threshold above a level the measured
+  voice actually reached is not strict, it is deaf** — all three are now capped
+  by `speech·0.55`. And the 5 dB reading itself came from AGC: `autoGainControl:
+  false` does not reach a Bluetooth stack, so the silent window is measured at a
+  different gain than the speech. Read the room from the pauses *inside* the
+  phrase instead, keep both estimates, use the lower.
+
 **Built 2026-07-26 — liveness hardening** (spec §8, tests in
 `server/liveness_test.go`). The site is now the deliverable, so a failed request
 is fine and a dead process is not. Fixed one critical (unbounded pace-bin

@@ -50,6 +50,13 @@ jobs:
       # Chromium.
       - run: python voice_level_check.py
         working-directory: lab
+      # Two more browser suites over the game that ships. Both guard bugs that
+      # were invisible to every other test because the code and the on-screen
+      # copy disagreed with each other rather than either being wrong alone.
+      - run: python drum_pad_mouse_test.py
+        working-directory: lab
+      - run: python acc_hint_test.py
+        working-directory: lab
 
   # Minimal-container leg: no glibc, no xdg-open, network disabled — proves
   # the static binary runs anywhere and the URL-printing fallback carries
