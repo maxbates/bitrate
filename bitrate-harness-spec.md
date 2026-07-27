@@ -703,6 +703,27 @@ Constraints that make this less trivial than it looks — none are reasons not t
 
 Worth measuring afterwards rather than assuming: whether the 60 s prompt actually changes the share of first-session players who reach a scored run. The ledger already answers it — `is_scored` per device per session.
 
+### The practice accuracy hint — BUILT 2026-07-27 (owner request)
+
+**The failure mode: a player who is fast, inaccurate, and happy about it.** Tile size is N (step 10 above), and the picker asks for it before the player has tapped anything — so the answer is a guess made with no data. Once play starts, nothing tells them the guess was wrong. A miss costs exactly as much *time* as a hit and the board keeps moving, so from the inside a 78% run feels like a fast run; the double penalty (§1 — a miss forfeits its +1 *and* subtracts 1) is invisible because it is subtracted from a number nobody is watching per-selection. The arm affordance guards against never producing a score. This guards against producing a bad one on a setting the player would have changed in two seconds if anyone had said so.
+
+**Trigger:** in `practice` only, on drum pad only, when the trailing-60 s window holds **≥ 30 selections at ≤ 85% accuracy**. Evaluated on the existing 1 Hz HUD tick, so nothing new runs in the tap path.
+
+**Copy — two sentences, and the second one is the point.** The first says what is happening and names the fix (`try 20 mm tiles in settings`, the next size up in this mode's menu; at the largest tile it says so and suggests easing off the pace instead — advice the settings sheet can't honour is worse than none). The second prices it: *at that same pace, 95% accuracy would be 12.4 bits/s and 100% would be 13.8*. Accuracy advice stated as a percentage is a scolding; stated as the bit rate they are leaving on the table it is an argument, and the arithmetic — net = n(2a − 1) — is exactly the double penalty made legible.
+
+Design decisions worth keeping:
+
+- **The figures are a static snapshot, not a live readout** (owner's call). A number that moves while you read it invites watching the banner instead of the board, and the HUD is already the live instrument.
+- **Trailing 60 s, matching the practice HUD**, with the same denominator clamp as `BitrateResults.trailingBps`. Two reasons: the advice is about how they are tapping *now*, so a warm-up they have grown out of shouldn't keep firing it; and a hypothetical computed on a different basis than the live figure directly above it would read as a bug.
+- **Once per practice run**, re-armed by the next one. Dismissed by opening settings (they are acting on it), by arming, by a new bout, or after 10 s.
+- **It is opaque and it does sit over live cells.** It cannot push `#field` down without moving N mid-run (§4.3.1), so the cost is paid in occlusion instead — the same trade `#device-warn` takes. Minimised by shaping: wide and shallow, hugging the band, so it eats the top row rather than a block out of the middle. Measured at 7% of field height on a tablet, 16% on a phone. Pointer-transparent, so a banner landing mid-reach can never eat the tap it lands on.
+- **A CSS trap worth recording:** a `position: fixed` box centred with `left: 50%` + `translateX(-50%)` shrink-to-fits against the space *right of that offset*, so it silently caps at 50vw. On a phone that turned two sentences into a nine-line block over a third of the grid. `left: 0; right: 0; margin-inline: auto; width: fit-content` is the fix. **`#device-warn` still has this bug** and would benefit from the same change.
+- **Drum pad only.** The arithmetic is identical in pixel lens and it would work there; the request was for the game that ships, and turning it on elsewhere is deleting one mode check.
+
+Verified in a headless browser across 29 assertions (trigger boundaries at 29/30 selections and either side of 85%, both copy branches, the arithmetic against an independent reference, all four dismissal paths, staticness, pointer-transparency, and that pixel lens never shows it). Driven by three new `pixelDebug` hooks: `accHintText()`, `accHintSpent()`, `tickAccuracyHint()`.
+
+**Not measured, and it should be:** whether players who see this actually change tile size, and whether their next scored run is better. `config_hash` changes when they do, so the ledger answers it.
+
 ### 8.1 Static backup site + DNS failover (2026-07-27)
 
 The site is the submission, so "the instance is down" and "we have no score" were the same sentence. They aren't any more.
