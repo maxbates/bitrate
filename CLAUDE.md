@@ -414,6 +414,21 @@ moving N — same trade as `#device-warn`, minimised by being wide and shallow.
 `left/right: 0; margin-inline: auto; width: fit-content` (`#device-warn` still
 has this bug). Hooks: `pixelDebug.accHintText/accHintSpent/tickAccuracyHint`.
 
+**Voice babble's mic calibration is OFF** — `MIC_CALIBRATION = false` in
+`voice-babble/game.js` (owner's call, 2026-07-27). One flag disables the level
+check, the `auto` trigger mode, and the band-limited energy path; voice babble
+behaves exactly as it did before that work (preset `high` 0.0012, unfiltered
+analyser, `TEMPLATE_VERSION` 3 so existing templates still load), and the `auto`
+button and re-check control are removed from the sheet. Kept, not deleted: the
+diagnosis was right each time and the remedy never survived real hardware —
+deaf on AirPods, then *8 of 5 words* on the built-in mic, ending at room −48 dB
+/ voice −40 dB where no threshold can sit above the room's peaks and below the
+voice. **A first-session grader must not be asked to tune a threshold before
+they can play**, which is why even the manual slider didn't save it.
+`lab/voice_level_check.py` asserts the reverted behaviour while the flag is off
+and the full suite when it is on — flip it and both still pass. Template
+calibration (saying each sound) is untouched and still required.
+
 **Fixed 2026-07-27 — two bugs where the code contradicted its own on-screen
 copy.** Both were invisible to every existing test because neither the rule nor
 the prose was wrong on its own — only the two disagreed. **Where a rule is

@@ -87,6 +87,46 @@ def main() -> int:
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.goto(url)
+            page.wait_for_function("() => !!window.voiceDebug", timeout=10_000)
+
+            # The mic calibration work is behind one flag and is currently OFF
+            # (owner's call — the measurement kept losing to real hardware).
+            # With it off the only thing to assert is that voice babble is back
+            # to what it was: no level panel, the preset trigger, templates at
+            # the pre-calibration version so existing ones still load. The rest
+            # of this suite describes machinery that deliberately does not run.
+            if not page.evaluate("window.voiceDebug.calibrationEnabled()"):
+                print("  mic calibration is OFF — asserting the reverted behaviour")
+                page.wait_for_timeout(500)
+                if not page.locator("#level").is_hidden():
+                    fails.append("level panel showed with calibration disabled")
+                floor = page.evaluate("window.voiceDebug.absFloor()")
+                tv = page.evaluate("window.voiceDebug.templateVersion()")
+                sens = page.evaluate("() => document.querySelectorAll('#seg-sens button').length")
+                auto = page.evaluate(
+                    "() => !!document.querySelector('#seg-sens [data-v=\\\"auto\\\"]')")
+                print(f"  ok   no level panel · floor {floor} · template version {tv} · "
+                      f"{sens} trigger presets, auto offered: {auto}")
+                if abs(floor - 0.0012) > 1e-9:
+                    fails.append(f"floor is {floor}, expected the original 'high' preset 0.0012")
+                if tv != 3:
+                    fails.append(f"template version is {tv}, expected 3 so existing "
+                                 "calibrations keep working")
+                if auto:
+                    fails.append("the 'auto' trigger option is still offered but measures nothing")
+                if page.evaluate("() => !!document.getElementById('recheck-level')"):
+                    fails.append("the re-check button is still in the settings sheet")
+                if errors:
+                    fails.append("page errors: " + "; ".join(errors))
+                browser.close()
+                print()
+                if fails:
+                    print("FAILURES:")
+                    for f in fails:
+                        print("  - " + f)
+                    return 1
+                print("voice level check: calibration disabled, reverted behaviour verified")
+                return 0
 
             # 1. Level check first, calibration second.
             page.wait_for_selector("#level:not([hidden])", timeout=10_000)

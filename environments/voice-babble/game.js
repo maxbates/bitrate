@@ -61,7 +61,10 @@ function loadSettings() {
   const d = localStorage.getItem(DISPLAY_KEY);
   if (d === 'chips' || d === 'lanes') display = d;
   const v = localStorage.getItem(SENS_KEY);
-  if (v && (v === 'auto' || SENS[v])) sensName = v;
+  // `auto` is only a valid stored value while calibration is on; otherwise a
+  // profile that tried it once would keep landing on a mode that no longer
+  // measures anything.
+  if (v && ((v === 'auto' && MIC_CALIBRATION) || SENS[v])) sensName = v;
 }
 
 function effectiveDisplay() {
@@ -96,10 +99,7 @@ function buildConfig() {
 function loadTemplates() {
   try {
     const all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}');
-    // Bumped to 4 when the energy path was band-limited (see micInit): the
-    // feature vectors and every level in them were measured through a
-    // different signal chain, so old templates describe a different mic.
-    if (all.timing !== 4) return null; // recalibrate after VAD/timing changes
+    if (all.timing !== TEMPLATE_VERSION) return null; // recalibrate after VAD/timing changes
     const map = (all.sets && all.sets[setName]) || null;
     if (!map) return null;
     // Stale templates from an older feature-vector shape force recalibration.
@@ -114,7 +114,7 @@ function saveTemplates(map) {
   let all;
   try { all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}'); } catch { all = {}; }
   all.version = 1;
-  all.timing = 4;
+  all.timing = TEMPLATE_VERSION;
   all.sets = all.sets || {};
   all.sets[setName] = map;
   try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(all)); } catch { /* fine */ }
@@ -161,11 +161,35 @@ const BANDS = 18;
 const FMIN = 100, FMAX = 4000;
 const ZCR_WEIGHT = 6;
 
+// ---- mic calibration: OFF (2026-07-27, owner's call) ----
+//
+// This one flag disables everything the mic-calibration work added: the level
+// check that ran before template calibration, the `auto` trigger mode, and the
+// band-limited energy path. With it false, voice babble behaves exactly as it
+// did before that work — preset trigger, unfiltered analyser, templates at
+// version 3 — so anyone's existing calibration keeps working.
+//
+// Why it is off rather than deleted: the diagnosis was right and the remedy
+// was not. The measurement kept being defeated by real hardware — three
+// successive estimators each failed on the owner's machine, ending at room
+// -48 dB / voice -40 dB, where a threshold must sit above the room's peaks and
+// below the voice and there is simply no such value. The dormant code (level
+// check, AGC handling, band-limiting, manual slider) is all still here and all
+// still tested; what it lacks is a design that survives a mic we haven't seen.
+// Turning this on again is a one-line change plus a plan for that.
+const MIC_CALIBRATION = false;
+
 // The energy path is band-limited to the recognizer's own band before the VAD
 // sees it — see micInit. FMIN/FMAX below are the feature bands; these are the
 // filter corners, set just outside them so nothing the classifier uses is lost.
 const HP_HZ = 100;
 const LP_HZ = 6000;
+
+// Templates are tied to the signal chain that recorded them, so the stored
+// version tracks it: 3 = unfiltered (what everyone already has), 4 = the
+// band-limited chain. Follows MIC_CALIBRATION so switching the flag never
+// silently classifies against templates from the other chain.
+const TEMPLATE_VERSION = MIC_CALIBRATION ? 4 : 3;
 
 let audioCtx = null;
 let analyser = null;
@@ -213,22 +237,22 @@ async function micInit() {
       f.Q.value = Math.SQRT1_2; // Butterworth: flat in band, no resonant peak
       return f;
     };
-    const hp1 = mk('highpass', HP_HZ), hp2 = mk('highpass', HP_HZ);
-    const lp = mk('lowpass', LP_HZ);
-
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0;
-    src.connect(hp1).connect(hp2).connect(lp).connect(analyser);
 
-    // An unfiltered tap, read only to report how much of the room was rumble.
-    // Keeping it means the panel can show the evidence rather than asking the
-    // player to take the filtering on faith.
-    rawAnalyser = audioCtx.createAnalyser();
-    rawAnalyser.fftSize = 2048;
-    rawAnalyser.smoothingTimeConstant = 0;
-    src.connect(rawAnalyser);
-    rawTimeBuf = new Float32Array(rawAnalyser.fftSize);
+    if (MIC_CALIBRATION) {
+      const hp1 = mk('highpass', HP_HZ), hp2 = mk('highpass', HP_HZ);
+      src.connect(hp1).connect(hp2).connect(mk('lowpass', LP_HZ)).connect(analyser);
+      // An unfiltered tap, read only to report how much of the room was rumble.
+      rawAnalyser = audioCtx.createAnalyser();
+      rawAnalyser.fftSize = 2048;
+      rawAnalyser.smoothingTimeConstant = 0;
+      src.connect(rawAnalyser);
+      rawTimeBuf = new Float32Array(rawAnalyser.fftSize);
+    } else {
+      src.connect(analyser); // the original chain, unfiltered
+    }
 
     freqBuf = new Float32Array(analyser.frequencyBinCount);
     timeBuf = new Float32Array(analyser.fftSize);
@@ -344,7 +368,7 @@ const SENS = { high: 0.0012, med: 0.003, low: 0.007 };
 // measurement — see the level check below — and keeps the presets as the
 // manual override. A per-player measured number, so it lives in localStorage
 // and NOT in the config hash; only the mode name is config (spec §5).
-let sensName = 'auto';
+let sensName = MIC_CALIBRATION ? 'auto' : 'high';
 let measured = null; // {ambient, speech, thr, snrDb, syllables, at} or null
 
 // The absolute floor in force right now. Auto with nothing measured yet (the
@@ -1677,7 +1701,11 @@ $('seg-sens').addEventListener('click', (e) => {
   syncSheet();
   // Switching to auto with nothing measured (or an expired measurement) runs
   // the check rather than silently sitting on the fallback preset.
-  if (sensName === 'auto' && !measured) { closeSheet(); startLevelCheck(toPractice); return; }
+  if (MIC_CALIBRATION && sensName === 'auto' && !measured) {
+    closeSheet();
+    startLevelCheck(toPractice);
+    return;
+  }
   toPractice();
 });
 
@@ -1685,6 +1713,15 @@ $('recheck-level').addEventListener('click', () => {
   closeSheet();
   startLevelCheck(toPractice);
 });
+
+// With calibration off, the controls it added come out of the sheet — an
+// `auto` button that silently means "the middle preset" is worse than not
+// offering it.
+if (!MIC_CALIBRATION) {
+  const autoBtn = $('seg-sens').querySelector('[data-v="auto"]');
+  if (autoBtn) autoBtn.remove();
+  $('recheck-level').remove();
+}
 
 // Live mic readout while the sheet is open — shows whether "didn't
 // register" is a level problem (peak below threshold) at a glance.
@@ -1773,6 +1810,8 @@ window.voiceDebug = {
   // band-limited rather than trusting that it still is.
   band: () => ({ hp: HP_HZ, lp: LP_HZ, filtered: !!(analyser && rawAnalyser) }),
   activeThr: () => activeThr(),
+  calibrationEnabled: () => MIC_CALIBRATION,
+  templateVersion: () => TEMPLATE_VERSION,
   skipLevel() {
     if (state !== 'level') return 'not in level check';
     skipLevelCheck();
@@ -1795,7 +1834,7 @@ if (measured) seg.noiseFloor = Math.min(NOISE_MAX, measured.ambient);
 function beginSession() {
   // Level check first: templates recorded through a wrong trigger are captured
   // off noise-opened segments, so measuring after calibrating fixes nothing.
-  if (sensName === 'auto' && !measured) {
+  if (MIC_CALIBRATION && sensName === 'auto' && !measured) {
     startLevelCheck(afterLevel);
   } else if (!templates) {
     startCalibration();
