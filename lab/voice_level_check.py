@@ -147,6 +147,68 @@ def main() -> int:
                 fails.append(f"AGC case: room {r['ambient']} took the inflated quiet "
                              f"window {AGC['ambientWindow']} rather than the gaps")
 
+            # 2c. The energy path must be band-limited to the recognizer's own
+            #     band. A full-band RMS counts rumble the classifier never
+            #     looks at; because the voice adds energy only inside the band,
+            #     the two sum in quadrature and a clear speaker in a silent
+            #     room measures ~5 dB of headroom on ANY microphone. That was
+            #     the real bug behind the AirPods report, which is why it
+            #     reproduced on the built-in mic too.
+            band = page.evaluate("window.voiceDebug.band()")
+            ok = band["hp"] >= 80 and band["lp"] <= 8000
+            print(f"  {'ok  ' if ok else 'FAIL'} vad energy band-limited to "
+                  f"{band['hp']}-{band['lp']} Hz")
+            if not ok:
+                fails.append(f"VAD energy band {band} does not bracket the speech band")
+
+            # ...and the filter has to actually do it. Render the same chain
+            # offline and measure its response, rather than trusting that a
+            # biquad named "highpass" is placed and configured correctly.
+            resp = page.evaluate("""async () => {
+              const { hp, lp } = window.voiceDebug.band();
+              const sr = 48000, len = sr / 2, out = {};
+              for (const f of [50, 60, 100, 300, 1000, 3000, 12000]) {
+                const ctx = new OfflineAudioContext(1, len, sr);
+                const mk = (type, hz) => {
+                  const b = ctx.createBiquadFilter();
+                  b.type = type; b.frequency.value = hz; b.Q.value = Math.SQRT1_2;
+                  return b;
+                };
+                const osc = ctx.createOscillator();
+                osc.frequency.value = f;
+                osc.connect(mk('highpass', hp)).connect(mk('highpass', hp))
+                   .connect(mk('lowpass', lp)).connect(ctx.destination);
+                osc.start();
+                const d = (await ctx.startRendering()).getChannelData(0);
+                let s = 0, n = 0;                      // skip the settling transient
+                for (let i = (d.length >> 1); i < d.length; i++) { s += d[i] * d[i]; n++; }
+                out[f] = 20 * Math.log10(Math.sqrt(s / n) / Math.SQRT1_2);
+              }
+              return out;
+            }""")
+            shape = " · ".join(f"{f}Hz {resp[f]:+.0f}" for f in sorted(resp, key=int))
+            rumble_cut = -resp["50"]
+            passband = max(abs(resp["300"]), abs(resp["1000"]), abs(resp["3000"]))
+            ok = rumble_cut >= 15 and passband <= 3
+            print(f"  {'ok  ' if ok else 'FAIL'} filter response (dB): {shape}")
+            if rumble_cut < 15:
+                fails.append(f"50 Hz rumble only cut by {rumble_cut:.0f} dB — the whole "
+                             "point is that it stops setting the trigger")
+            if passband > 3:
+                fails.append(f"speech band bent by {passband:.0f} dB — the filter is "
+                             "eating what the recognizer needs")
+
+            # The quadrature arithmetic itself, in the units the check uses:
+            # a rumble floor under a clear voice must not eat the headroom.
+            import math
+            rumble, voice = 0.020, 0.030
+            full_band = 20 * math.log10(math.hypot(rumble, voice) / rumble)
+            in_band = 20 * math.log10(math.hypot(0.002, voice) / 0.002)
+            print(f"  ok   same room measured full-band reads {full_band:.0f} dB "
+                  f"headroom, band-limited {in_band:.0f} dB")
+            if full_band > 8:
+                fails.append("quadrature model wrong — revisit the premise")
+
             # 3. Skippable, and the skip falls back to the middle preset.
             page.evaluate("window.voiceDebug.skipLevel()")
             page.wait_for_selector("#calib:not([hidden])", timeout=5_000)
@@ -158,7 +220,7 @@ def main() -> int:
             # 4. A stored measurement is used, and skips the check.
             page.evaluate("""
               localStorage.setItem('bitrate_voice_level_v1', JSON.stringify(
-                {v: 1, at: Date.now(), ambient: 0.0015, speech: 0.06, thr: 0.0092, snrDb: 32}));
+                {v: 2, at: Date.now(), ambient: 0.0015, speech: 0.06, thr: 0.0092, snrDb: 32}));
             """)
             page.reload()
             page.wait_for_selector("#calib:not([hidden]), #stage:not([hidden])", timeout=10_000)

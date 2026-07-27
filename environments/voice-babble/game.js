@@ -96,7 +96,10 @@ function buildConfig() {
 function loadTemplates() {
   try {
     const all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}');
-    if (all.timing !== 3) return null; // recalibrate after VAD/timing changes
+    // Bumped to 4 when the energy path was band-limited (see micInit): the
+    // feature vectors and every level in them were measured through a
+    // different signal chain, so old templates describe a different mic.
+    if (all.timing !== 4) return null; // recalibrate after VAD/timing changes
     const map = (all.sets && all.sets[setName]) || null;
     if (!map) return null;
     // Stale templates from an older feature-vector shape force recalibration.
@@ -111,7 +114,7 @@ function saveTemplates(map) {
   let all;
   try { all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}'); } catch { all = {}; }
   all.version = 1;
-  all.timing = 3;
+  all.timing = 4;
   all.sets = all.sets || {};
   all.sets[setName] = map;
   try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(all)); } catch { /* fine */ }
@@ -158,8 +161,16 @@ const BANDS = 18;
 const FMIN = 100, FMAX = 4000;
 const ZCR_WEIGHT = 6;
 
+// The energy path is band-limited to the recognizer's own band before the VAD
+// sees it — see micInit. FMIN/FMAX below are the feature bands; these are the
+// filter corners, set just outside them so nothing the classifier uses is lost.
+const HP_HZ = 100;
+const LP_HZ = 6000;
+
 let audioCtx = null;
 let analyser = null;
+let rawAnalyser = null; // unfiltered, diagnostics only
+let rawTimeBuf = null;
 let micOK = false;
 let micStarting = false;
 let bandBins = null; // [ [startBin, endBin), ... ]
@@ -179,10 +190,46 @@ async function micInit() {
     // iOS creates the context suspended even inside a gesture until resumed.
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     const src = audioCtx.createMediaStreamSource(stream);
+
+    // Band-limit to the speech band BEFORE anything is measured.
+    //
+    // The VAD's energy was a full-band time-domain RMS, so "the room" counted
+    // DC offset, sub-100 Hz rumble (fans, HVAC, desk vibration, mains hum) and
+    // HF hiss — none of which the classifier's 100–4000 Hz bands even look at.
+    // A voice only adds energy inside that band, and the two sum in
+    // quadrature, so a −34 dB rumble floor under a −30 dB voice measures as
+    // −29 dB during speech: 5 dB of apparent headroom for a perfectly clear
+    // speaker, on any microphone, in a silent room. Band-limited first, the
+    // same room and voice give ~23 dB. This was reported on AirPods AND the
+    // built-in mic, which is exactly the tell that it was never the device.
+    //
+    // Two cascaded highpasses (24 dB/oct) put real attenuation on mains hum
+    // rather than the 8 dB a single pole would manage. The corner matches the
+    // feature bands' own floor, so nothing the recognizer uses is discarded.
+    const mk = (type, hz) => {
+      const f = audioCtx.createBiquadFilter();
+      f.type = type;
+      f.frequency.value = hz;
+      f.Q.value = Math.SQRT1_2; // Butterworth: flat in band, no resonant peak
+      return f;
+    };
+    const hp1 = mk('highpass', HP_HZ), hp2 = mk('highpass', HP_HZ);
+    const lp = mk('lowpass', LP_HZ);
+
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0;
-    src.connect(analyser);
+    src.connect(hp1).connect(hp2).connect(lp).connect(analyser);
+
+    // An unfiltered tap, read only to report how much of the room was rumble.
+    // Keeping it means the panel can show the evidence rather than asking the
+    // player to take the filtering on faith.
+    rawAnalyser = audioCtx.createAnalyser();
+    rawAnalyser.fftSize = 2048;
+    rawAnalyser.smoothingTimeConstant = 0;
+    src.connect(rawAnalyser);
+    rawTimeBuf = new Float32Array(rawAnalyser.fftSize);
+
     freqBuf = new Float32Array(analyser.frequencyBinCount);
     timeBuf = new Float32Array(analyser.fftSize);
     const hzPerBin = audioCtx.sampleRate / analyser.fftSize;
@@ -212,6 +259,14 @@ function readFrame() {
   }
   const rms = Math.sqrt(sum / timeBuf.length);
   const zcr = zc / timeBuf.length;
+  // Unfiltered level, for the "how much of that was rumble" readout only —
+  // never for the VAD, which must see the band-limited signal.
+  let rawSum = 0;
+  if (rawAnalyser) {
+    rawAnalyser.getFloatTimeDomainData(rawTimeBuf);
+    for (let i = 0; i < rawTimeBuf.length; i++) rawSum += rawTimeBuf[i] * rawTimeBuf[i];
+  }
+  const rmsRaw = Math.sqrt(rawSum / (rawTimeBuf ? rawTimeBuf.length : 1));
   const bands = new Array(BANDS);
   for (let b = 0; b < BANDS; b++) {
     const [s, e] = bandBins[b];
@@ -219,7 +274,7 @@ function readFrame() {
     for (let i = s; i < e; i++) acc += freqBuf[i]; // dB domain
     bands[b] = acc / (e - s);
   }
-  return { rms, zcr, bands, t: performance.now() };
+  return { rms, rmsRaw, zcr, bands, t: performance.now() };
 }
 
 // Two-stage feature vector: onset frames + steady frames, concatenated.
@@ -531,7 +586,7 @@ let lvl = null; // {phase, t0, ambient: [], speech: [], next, ...}
 function loadLevel() {
   try {
     const m = JSON.parse(localStorage.getItem(LEVEL_KEY) || 'null');
-    if (!m || m.v !== 1 || !(m.thr > 0)) return null;
+    if (!m || m.v !== 2 || !(m.thr > 0)) return null; // v2: band-limited energy
     // Date.now() only stamps the measurement's age — all run timing is still
     // performance.now(); a wall clock never touches the scoring path.
     if (!(Date.now() - m.at < LEVEL_MAX_AGE_MS)) return null;
@@ -540,7 +595,7 @@ function loadLevel() {
 }
 
 function saveLevel(m) {
-  try { localStorage.setItem(LEVEL_KEY, JSON.stringify(Object.assign({ v: 1, at: Date.now() }, m))); }
+  try { localStorage.setItem(LEVEL_KEY, JSON.stringify(Object.assign({ v: 2, at: Date.now() }, m))); }
   catch { /* fine */ }
 }
 
@@ -702,7 +757,12 @@ function computeLevel(ambientFrames, speechFrames) {
   // the upper clamp and by the live `noiseFloor · TRIGGER_MULT` term, while one
   // that is too high sets the trigger out of the player's reach and the game
   // simply stops responding.
+  // How much of the room the band-limiting removed. Purely a readout: it is
+  // the difference between what a full-band RMS would have called "the room"
+  // and what actually competes with speech.
+  const rawQuiet = Math.max(median(ambientFrames.map((f) => f.rmsRaw || f.rms)), 1e-6);
   const quiet = Math.max(median(ambientFrames.map((f) => f.rms)), 1e-6);
+  const rumbleDb = dbfs(rawQuiet) - dbfs(quiet);
   const gaps = Math.max(pctl(speechRms, 0.15), 1e-6);
   const ambient = Math.max(Math.min(quiet, gaps), 1e-6);
   // A silent window much hotter than the pauses in continuous speech is the
@@ -728,7 +788,7 @@ function computeLevel(ambientFrames, speechFrames) {
   const syllables = heardNothing ? 0 : replaySyllables(speechFrames, d.thr, ambient, speech);
   return {
     ambient, speech, thr: d.thr, snrDb: d.snrDb, syllables,
-    noisy: d.noisy, heardNothing, processed, quiet, gaps,
+    noisy: d.noisy, heardNothing, processed, quiet, gaps, rawQuiet, rumbleDb,
     clean: !heardNothing && !d.noisy && syllables === LV.PHRASE.length,
   };
 }
@@ -810,6 +870,12 @@ function renderLevelPanel() {
       ' · voice <b>' + dbfs(r.speech).toFixed(0) + ' dB</b>' +
       ' · headroom <b>' + r.snrDb.toFixed(0) + ' dB</b><br>' +
       'trigger set to <b>' + dbfs(r.thr).toFixed(0) + ' dB</b> · ' + counted +
+      // Only when it actually did something. On a clean mic this is ~0 dB and
+      // saying so would be noise about noise.
+      (r.rumbleDb >= 3
+        ? '<br><span class="ok">' + r.rumbleDb.toFixed(0) + ' dB of low-frequency rumble filtered out</span>' +
+          ' — fans, traffic and desk hum sit below your voice and are ignored'
+        : '') +
       (r.noisy && r.processed
         // Naming the cause matters: this player is usually in a silent room,
         // and telling them to find a quieter one sends them chasing nothing.
@@ -1616,6 +1682,9 @@ window.voiceDebug = {
   deriveThreshold,
   measured: () => measured,
   absFloor,
+  // The energy path's filter corners, so a test can assert the VAD is
+  // band-limited rather than trusting that it still is.
+  band: () => ({ hp: HP_HZ, lp: LP_HZ, filtered: !!(analyser && rawAnalyser) }),
   skipLevel() {
     if (state !== 'level') return 'not in level check';
     skipLevelCheck();

@@ -432,10 +432,19 @@ stated to the player in prose, treat the prose as a testable assertion.**
   can ever register. Same fixed-multiple mistake in the reach test (`ambient·2`)
   and in the live `noiseFloor·1.8` term. **A threshold above a level the measured
   voice actually reached is not strict, it is deaf** — all three are now capped
-  by `speech·0.55`. And the 5 dB reading itself came from AGC: `autoGainControl:
-  false` does not reach a Bluetooth stack, so the silent window is measured at a
-  different gain than the speech. Read the room from the pauses *inside* the
-  phrase instead, keep both estimates, use the lower.
+  by `speech·0.55`.
+- **...and the 5 dB reading itself: the VAD measured energy the recognizer never
+  looks at.** Full-band time-domain RMS counted DC, sub-100 Hz rumble and hiss;
+  the voice adds energy only in 100–4000 Hz; uncorrelated signals sum in
+  quadrature, so a −34 dB rumble floor under a −30 dB voice reads as 5.1 dB of
+  headroom **on any microphone in a silent room**. Now band-limited at the
+  source: `src → highpass(100) ×2 → lowpass(6000) → analyser`. Forces one
+  recalibration (`timing` 3→4, level `v` 1→2).
+  **Method note worth more than the fix:** the first diagnosis was AGC on the
+  Bluetooth chain, and it was wrong. What falsified it was the owner reporting
+  the same 5 dB on the *built-in* mic. **When a symptom survives a change of
+  device, the device is not the variable.** The AGC handling was kept — it is
+  right about a different case — but it was not this bug.
 
 **Built 2026-07-26 — liveness hardening** (spec §8, tests in
 `server/liveness_test.go`). The site is now the deliverable, so a failed request
