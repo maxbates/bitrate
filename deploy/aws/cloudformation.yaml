@@ -269,6 +269,12 @@ Resources:
       Tags:
         - { Key: Name, Value: bitrate }
 
+  # ---- DNS failover (spec §8.1) -----------------------------------------
+  # Two records on one name. Route 53 serves PRIMARY while its health check
+  # passes and SECONDARY otherwise, so a grader who opens the URL during an
+  # outage still lands on a playable, scoring game instead of a dead host.
+  # TTL 60 so a failover (and the recovery back) is minutes, not hours.
+
   DnsRecord:
     Type: AWS::Route53::RecordSet
     Properties:
@@ -277,6 +283,139 @@ Resources:
       Type: A
       TTL: "60"
       ResourceRecords: [!Ref Eip]
+      SetIdentifier: primary-ec2
+      Failover: PRIMARY
+      # The same check that drives the email alarm, so "we got paged" and "DNS
+      # moved" can never disagree about whether the site is up.
+      HealthCheckId: !Ref HealthCheck
+
+  DnsRecordBackup:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      SetIdentifier: secondary-static
+      Failover: SECONDARY
+      AliasTarget:
+        # Fixed, AWS-published hosted zone id for all CloudFront distributions.
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt BackupCdn.DomainName
+        EvaluateTargetHealth: false
+
+  # ---- the static backup site -------------------------------------------
+  # Emitted by the binary itself (`-emit-static`), so it cannot drift from what
+  # the server serves. It has no /api: the game draws its own sequence
+  # (BitrateOffline) and scores itself, which it already did — the leaderboard,
+  # run history, and server-side recomputation are simply absent.
+  #
+  # S3 alone can't serve this: a website endpoint is HTTP-only, and failing a
+  # public HTTPS URL over to plain HTTP breaks the browser (and HSTS). Hence
+  # CloudFront in front, with an ACM cert for the same hostname.
+
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - { Key: Name, Value: bitrate-backup }
+
+  # Origin access: the bucket stays private and only this distribution may read
+  # it, so the backup can't be scraped or hot-linked out of band.
+  BackupOac:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-backup-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  BackupBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref BackupBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${BackupBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${BackupCdn}"
+
+  BackupCert:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  # S3's REST origin does not resolve directory indexes — only the root object.
+  # The game lives at /env/<name>/, so without this every such request 404s.
+  #
+  # The first attempt at this used CustomErrorResponses to map 403/404 to
+  # /index.html with a 200. That was wrong twice over: it served the root
+  # redirect page in place of the game, and it made /api/* answer 200, so the
+  # client saw a "successful" response containing HTML. Rewriting the path is
+  # the actual fix; a miss now returns a real 404.
+  IndexRewrite:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "${AWS::StackName}-index-rewrite"
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Resolve directory requests to index.html
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var req = event.request;
+          var uri = req.uri;
+          if (uri.endsWith('/')) {
+            req.uri = uri + 'index.html';
+          } else if (!uri.split('/').pop().includes('.')) {
+            // Extensionless path: treat it as a directory (/readme -> /readme/index.html).
+            req.uri = uri + '/index.html';
+          }
+          return req;
+        }
+
+  BackupCdn:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: bitrate static backup (served when the primary fails its health check)
+        Aliases: [!Ref DomainName]
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          AcmCertificateArn: !Ref BackupCert
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: backup-s3
+            DomainName: !GetAtt BackupBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt BackupOac.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+        DefaultCacheBehavior:
+          TargetOriginId: backup-s3
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+          # CachingOptimized (AWS managed policy id).
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt IndexRewrite.FunctionMetadata.FunctionARN
 
   # ---- alerting (spec §6) ------------------------------------------------
   # The deployed site is the whole submission now, so an outage during a
@@ -400,3 +539,9 @@ Outputs:
     Value: !Ref AlertTopic
   HealthCheckId:
     Value: !Ref HealthCheck
+  BackupBucket:
+    Description: S3 bucket holding the static backup site (uploaded by deploy.sh).
+    Value: !Ref BackupBucket
+  BackupCdnDomain:
+    Description: CloudFront domain for the backup — reachable directly for testing.
+    Value: !GetAtt BackupCdn.DomainName

@@ -180,6 +180,20 @@ dist/           build output (gitignored)
 - Lab builds default `-data` to `~/.bitrate/data` (absolute) so launching from a
   worktree doesn't fork the ledger; ship-tag builds keep relative `data/`.
 
+**Static backup + DNS failover (2026-07-27, spec §8.1).** `bitrate.einkgen.link`
+is a Route 53 **failover** pair: PRIMARY → the EIP (gated on the same health
+check that drives the email alarms), SECONDARY → CloudFront over a private S3
+bucket holding a front-end-only build. It works because **scoring was always
+client-side** — the server's only unique contribution to *playing* is the target
+sequence, so `BitrateOffline` (in `common/results.js`) draws it locally with
+rejection sampling (never `x % m`, which biases low symbols). Offline runs set
+`run.offline`, skip submit, and say "score computed on this device, not
+recorded". The bundle is emitted by the binary (`-emit-static`) so it can't drift
+from what the server serves. **Trap already hit:** S3 doesn't resolve directory
+indexes, and "fixing" that with CloudFront 403/404→index.html made *every* path
+return 200 with the wrong page — a CloudFront viewer-request rewrite is the real
+fix. **Verify a static mirror on content, never status codes.**
+
 **Packaging (revised 2026-07-26).** There is **no ZIP and no `ship/` directory** —
 the submission is the deployed site plus the public repo (spec §8). `README.md` is
 at the repo root (GitHub's landing page *and* the source for `/readme`), `run.sh`
