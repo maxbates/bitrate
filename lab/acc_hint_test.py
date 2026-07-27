@@ -18,7 +18,7 @@ It drives the real UI through the pixelDebug hooks; it answers "is it correct",
 never "is it better" (spec §7 — nothing here may rank variants).
 """
 import atexit
-import json, sys
+import json, re, sys
 from playwright.sync_api import sync_playwright
 
 from synthetic_player import launch_server
@@ -106,8 +106,18 @@ with sync_playwright() as pw:
     n_sel = st["sc"] + st["si"]
     exp95 = st["bits"] * n_sel * 0.9 / secs
     exp100 = st["bits"] * n_sel / secs
-    check("95%% figure matches bits*n*0.9/t (%.1f)" % exp95, ("%.1f" % exp95) in txt, txt)
-    check("100%% figure matches bits*n/t (%.1f)" % exp100, ("%.1f" % exp100) in txt, txt)
+    # Compare numerically, not by matching the rendered 1-dp string. The banner
+    # is generated at tickAccuracyHint() time while the reference is recomputed
+    # from a trailingBps() sampled moments later, so the two disagree in the
+    # last digit whenever the machine is loaded — which made this fail roughly
+    # one run in three under parallel suites while nothing was actually wrong.
+    # Bounded decimal, so the sentence's full stop isn't swallowed into "40.6."
+    quoted = [float(v) for v in re.findall(r"would be (\d+(?:\.\d+)?)", txt)]
+    TOL = 0.25
+    check("95%% figure matches bits*n*0.9/t (%.1f)" % exp95,
+          len(quoted) == 2 and abs(quoted[0] - exp95) <= TOL, txt)
+    check("100%% figure matches bits*n/t (%.1f)" % exp100,
+          len(quoted) == 2 and abs(quoted[1] - exp100) <= TOL, txt)
     check("hypotheticals beat the live trailing bps", exp95 > st["bps"] and exp100 > exp95,
           "live %.1f" % st["bps"])
 

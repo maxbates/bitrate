@@ -24,6 +24,10 @@ let loupeR = 110;            // lens radius (px, settings-driven)
 // magnification so the steps stay invisible.
 function lensRings() { return Math.round(16 + lensMag * 5); }
 const ARROW_DIST = 320;      // beyond this, show the direction affordance
+// Inset of the loupe's true-position pin from the cell edge, in px. Big enough
+// that the pin's outer stroke (1.75 px either side of the path) still falls
+// inside the cell, so every pixel of the mark is a valid click.
+const PIN_INSET = 2;
 // Per-game settings: the two share an implementation, not a cell menu.
 const SETTINGS_KEY_BY_MODE = { mouse: 'bitrate_pixel_settings_v1', touch: 'bitrate_drum_settings_v1' };
 const DEFAULT_CELL_MM = 5;
@@ -1022,16 +1026,23 @@ function drawLoupe() {
     if (dist < loupeR) {
       const tx = loupeR + dx;
       const ty = loupeR + dy;
+      // The pin is the CELL, at its true size — not a fixed 6 px dot.
+      // What the player needs from this mark is not only where to click but
+      // how much room there is to miss by, and a constant-radius circle
+      // answered neither: it understated a 10 mm cell badly and overstated a
+      // 3 mm one, while implying a round target for a square hit region.
+      //
+      // Inset so the whole mark, outermost stroke included, lies inside the
+      // real cell: then clicking anywhere on it — border included — is a hit,
+      // and the drawing never promises area it doesn't own.
+      const s = Math.max(6, grid.cell - PIN_INSET * 2);
+      const x0 = tx - s / 2, y0 = ty - s / 2;
       lctx.lineWidth = 3.5;
       lctx.strokeStyle = 'rgba(0, 0, 0, .6)';
-      lctx.beginPath();
-      lctx.arc(tx, ty, 6, 0, Math.PI * 2);
-      lctx.stroke();
+      lctx.strokeRect(x0, y0, s, s);
       lctx.lineWidth = 1.75;
       lctx.strokeStyle = '#e0b452';
-      lctx.beginPath();
-      lctx.arc(tx, ty, 6, 0, Math.PI * 2);
-      lctx.stroke();
+      lctx.strokeRect(x0, y0, s, s);
       lctx.lineWidth = 1;
     }
   }

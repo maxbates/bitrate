@@ -748,6 +748,14 @@ The fix keeps every guarantee that mattered and honours the promise: a mouse rea
 
 **The general lesson, and the reason this is written down rather than just fixed:** the bug was invisible to every existing test because the gate was correct and the *copy* was correct — only the two disagreed. Where a rule is stated to the player in prose, the prose is a testable assertion. `lab/drum_pad_mouse_test.py` now asserts both halves against each other (14 assertions, mouse-only and touch contexts), including that the notice text itself still says practice works.
 
+### Two affordance fixes on the pointer games (2026-07-27, owner request)
+
+**The loupe's true-position pin is the cell, at the cell's size.** It was a fixed radius-6 circle drawn at the target's real screen offset — right in *placement* and wrong in both *shape* and *scale*. The hit region is a square, so a circle mis-describes it; and a constant radius says nothing about how much room there is to miss by, which at pixel lens's 3–10 mm cells is the one thing the player needs from that mark. It badly understated a 10 mm cell and overstated a 3 mm one. It is now a square of `grid.cell` inset by `PIN_INSET` (2 px), chosen so the outermost stroke still falls **inside** the real cell: every pixel of the drawn mark is a valid click, and the drawing never promises area it doesn't own. The pin stays undistorted while the magnified image slides under the glass — that property was always right and is unchanged.
+
+**The on-grid target fill's corner radius is proportional, not a flat 4 px.** On drum pad's 12–25 mm tiles a 4 px radius is a square with softened corners; on pixel lens's ~15 px fill it rounded the thing into a dot, so the "act on this now" cue contradicted the square hit region for exactly the mode where precision matters most. Now `min(4px, cell/8)` — drum pad is unchanged (it clamps), pixel lens reads as a square.
+
+**`#device-warn` drops to 0.75 opacity.** The no-touchscreen banner is *standing* (it never dismisses) and is pinned over the top row of cells, so at full opacity a target spawning behind it was simply invisible — verified: at opacity 1 the fill is completely hidden, at 0.75 the square and its glow read through clearly. The banner was already pointer-transparent, so visibility was the only thing left between the player and the tap. This is the same occlusion trade §9 records for the accuracy hint, paid down one notch further.
+
 ### 8.1 Static backup site + DNS failover (2026-07-27)
 
 The site is the submission, so "the instance is down" and "we have no score" were the same sentence. They aren't any more.
