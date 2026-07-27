@@ -30,6 +30,7 @@ func main() {
 		dev       = flag.Bool("dev", false, "serve frontend assets from disk (environments/) instead of the embedded copies")
 		devRoot   = flag.String("dev-root", "environments", "asset root for -dev")
 		noBrowser = flag.Bool("no-browser", false, "do not try to open the browser")
+		emitDir   = flag.String("emit-static", "", "write the frontend out as a static site to this directory and exit (spec §8.1 backup)")
 	)
 	// `bitrate merge <bundle>` is a subcommand, not a flag mode (spec §4.4:
 	// merge is offline and never an endpoint). Parse flags after it so
@@ -77,6 +78,15 @@ func main() {
 			log.Fatal(err)
 		}
 		env = sub
+	}
+
+	// -emit-static is a build step, not a server mode: write the tree and exit
+	// before touching the ledger, so it can run anywhere without a data dir.
+	if *emitDir != "" {
+		if err := emitStatic(env, *emitDir); err != nil {
+			log.Fatalf("emit-static: %v", err)
+		}
+		return
 	}
 
 	store, err := OpenStore(*dataDir)

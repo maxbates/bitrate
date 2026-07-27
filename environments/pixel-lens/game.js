@@ -82,7 +82,14 @@ let zoomMode = 'auto'; // 'auto' (25mm apparent) or a fixed multiplier
 let audioOn = true;    // selection sounds: soft ding on a hit, buzz on a miss
 let sizeChosen = false; // has this player ever picked a tile size here?
 
+// Matches the server's SequenceLen: long enough that a 60 s run never exhausts
+// it, so the offline path and the online one behave identically.
+const SEQ_LEN = 2000;
 let CONFIG = null, N = 0, BITS = 0, DURATION_MS = 60000;
+// True when this run's sequence was drawn locally because /api was unreachable
+// (the static backup site, or the primary being down). Scoring is unaffected —
+// it was always client-side — but nothing can be submitted or verified.
+let offline = false;
 let grid = { cols: 0, rows: 0, cell: 19, w: 0, h: 0 };
 let lensMag = 5; // center magnification; falls off to 1 at the rim
 
@@ -294,29 +301,48 @@ async function startRun(scored) {
   // fixed N, not whatever the global has drifted to by submit time. (Sc/Si are
   // already resize-safe: they compare against run.seq, which is fixed.)
   const startN = N, startBits = BITS;
-  const resp = await fetch('/api/run/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      device_id: DEVICE_ID,
-      config: CONFIG,
-      scored,
-      client_meta: {
-        ua: navigator.userAgent,
-        screen_w: screen.width,
-        screen_h: screen.height,
-        dpr: devicePixelRatio,
-        lang: navigator.language,
-        touch_points: navigator.maxTouchPoints || 0,
-        pointer_coarse: matchMedia('(pointer: coarse)').matches,
-      },
-    }),
-  });
-  if (!resp.ok) throw new Error('run/start failed: ' + resp.status);
-  const data = await resp.json();
+  // The server is asked first and is still the authority when it answers: it
+  // mints the run, stores the config, and recomputes the score at submit. But it
+  // is not *required* to play — on the static backup site (spec §8.1) there is no
+  // /api, and the only thing that endpoint uniquely supplies is the sequence,
+  // which BitrateOffline can draw with the same uniformity discipline. So a
+  // failure here degrades the run rather than ending it.
+  let data = null;
+  try {
+    const resp = await fetch('/api/run/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        device_id: DEVICE_ID,
+        config: CONFIG,
+        scored,
+        client_meta: {
+          ua: navigator.userAgent,
+          screen_w: screen.width,
+          screen_h: screen.height,
+          dpr: devicePixelRatio,
+          lang: navigator.language,
+          touch_points: navigator.maxTouchPoints || 0,
+          pointer_coarse: matchMedia('(pointer: coarse)').matches,
+        },
+      }),
+    });
+    if (!resp.ok) throw new Error('run/start failed: ' + resp.status);
+    data = await resp.json();
+  } catch {
+    data = null; // offline: fall through to a locally drawn sequence
+  }
+  offline = !data;
+  if (offline) {
+    data = {
+      run_id: BitrateOffline.runId(),
+      sequence_ints: BitrateOffline.ints(N, SEQ_LEN),
+    };
+  }
   run = {
     id: data.run_id,
     seq: data.sequence_ints,
+    offline,
     n: startN,
     bits: startBits,
     scored,
@@ -1289,6 +1315,11 @@ async function submitRun(invalidated) {
   const r = run;
   if (!r || r.submitted) return null;
   r.submitted = true;
+  // An offline run has no server-side record to submit against: /api/run/start
+  // never minted it, so a submit would 404 and the retry queue would grind
+  // forever on something that can never succeed. Fail fast and let the caller
+  // render the client score (which is the real score — see renderResults).
+  if (r.offline) throw new Error('offline run — nothing to submit');
   const elapsed = r.scored ? DURATION_MS : elapsedMsOf(r);
   const tSec = r.scored ? CONFIG.duration_s : Math.max(elapsed, lastKeyT(r)) / 1000;
   const cs = scoreWith(r, tSec);
@@ -1396,6 +1427,11 @@ function renderResults(opts) {
   const n = opts.server ? opts.server.n : cs.n;
   let note = '';
   if (opts.waiting) note = '<div class="res-note">verifying with server…</div>';
+  // An offline run's score is not a degraded estimate — the client has always
+  // computed bps, N, Sc and Si itself, and the formula is the brief's. What is
+  // missing is the server's independent recomputation and the charts, so say
+  // that rather than implying the number is provisional.
+  else if (run && run.offline) note = '<div class="res-note">offline — score computed on this device, not recorded</div>';
   else if (opts.clientOnly) note = '<div class="res-note warn">server unreachable — client score shown; result queued</div>';
   else if (opts.server && opts.server.anomaly) note = '<div class="res-note warn">client/server scoring disagreement logged</div>';
 

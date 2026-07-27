@@ -711,6 +711,24 @@ Constraints that make this less trivial than it looks — none are reasons not t
 
 Worth measuring afterwards rather than assuming: whether the 60 s prompt actually changes the share of first-session players who reach a scored run. The ledger already answers it — `is_scored` per device per session.
 
+### 8.1 Static backup site + DNS failover (2026-07-27)
+
+The site is the submission, so "the instance is down" and "we have no score" were the same sentence. They aren't any more.
+
+**Why this is cheap, and it is the whole reason it's worth doing.** The scoring was always client-side — `scoreWith()` computes bps, N, Sc and Si in the browser, and `renderResults({clientOnly:true})` already rendered a complete result when a submit failed. The server's unique contribution to *playing* is exactly one thing: the target sequence from `/api/run/start`. Everything else it does — storing runs, recomputing the score as a cross-check, the leaderboard — is lab machinery, not gameplay. So a front-end-only fallback needed one new capability, not a rewrite.
+
+**`BitrateOffline` (environments/common/results.js)** draws the sequence locally when `/api` is unreachable. Rule 1 is satisfied either way: the server's seeded generator exists for *replayability*, not compliance, and an offline run has nothing to replay into. The care goes into uniformity — `crypto.getRandomValues` gives uniform bytes, but `x % m` is only uniform when m divides the range, and otherwise favours the low symbols, which is real exploitable structure in a sequence the brief requires to be uniform. So draws at or above the largest exact multiple of m are rejected and redrawn, mirroring the server's `256 - 256%m`. Measured in-browser: χ²=66 against df=83 for m=84, χ²=106 against df=99 for m=100, and adjacent repeats 1197 vs 1190 expected (repeats *must* occur — sampling is with replacement).
+
+An offline run sets `run.offline`, which short-circuits `submitRun` (there is no server-side record to submit against, so the retry queue would grind forever on a 404) and labels the results card **"offline — score computed on this device, not recorded"**. Deliberately not phrased as a degraded estimate: the number is the brief's formula over the same selections, and what is actually missing is the server's independent recomputation and the charts.
+
+**The bundle is emitted by the binary** (`-emit-static`), not assembled by a script, because the binary already carries the embedded environments *and* the markdown renderer — so what it writes cannot drift from what it serves. `deploy.sh` emits and syncs it on every deploy.
+
+**Serving it: S3 + CloudFront, not S3 alone.** An S3 website endpoint is HTTP-only, and failing a public HTTPS URL over to plain HTTP breaks the browser (and HSTS). So the bucket stays private behind an Origin Access Control, with CloudFront and an ACM cert for the same hostname in front. `Route53::RecordSet` failover on one name: PRIMARY → the EIP, gated on the **same health check that drives the email alarm** (so "we got paged" and "DNS moved" can never disagree), SECONDARY → the distribution. TTL 60.
+
+**One trap, worth recording because the first attempt hit it.** S3's REST origin does not resolve directory indexes, only the root object, and the game lives at `/env/<name>/`. The first fix mapped CloudFront 403/404 to `/index.html` with a 200 — which was wrong twice: it served the root redirect page *instead of the game* at every path, and it made `/api/*` answer **200** with HTML, so the client saw a "successful" response it then failed to parse. Worse, it made every smoke test pass: everything returned 200. A CloudFront viewer-request function that rewrites `/foo/` → `/foo/index.html` is the actual fix, and a miss now returns a real 403. **Verifying a static mirror by status code alone is not verification — assert on the content.**
+
+**Verified end-to-end on the live distribution:** a full 60-second scored run with no server at all (49.30 bits/s, N 120, Sc 429, Si 0, offline note shown), `/api/run/start` returning 403 rather than pretending to work, and the primary still serving with DNS pointing at the EIP and all health-check regions reporting Success. **Not verified: the failover switch itself**, which would need a real outage — the records and health check are correct, but Route 53 flipping them has not been observed.
+
 ### Liveness hardening (2026-07-26) — the site is now the deliverable
 
 Shipping the deployed app instead of a ZIP changes the threat model: **a request that fails is acceptable; a process that dies is not.** The game, the HUD, and the scoring preview are all client-side, so a 500 costs one submission, while a dead process costs every grader still to play. An audit of the server against that standard found one critical hole and three high ones. All are fixed, with regression tests in `server/liveness_test.go`.
