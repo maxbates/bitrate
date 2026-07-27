@@ -24,21 +24,20 @@ reason it lost. The leaderboard ranks the contenders.
 
 ### Running it yourself
 
-The source is at <https://github.com/maxbates/bitrate>. From a clone, or from
-`dist/bitrate.zip` built by `build.sh`:
+The source is at <https://github.com/maxbates/bitrate>. From a clone:
 
 ```
 bash run.sh
 ```
 
-No installation, no network, no runtime dependencies — the script starts a
-loopback-only server, prints a URL, and opens your browser. It works fully
-offline. Linux (x86_64 / arm64) is the supported platform; macOS binaries ride
-along as a courtesy.
+Requires Go and nothing else — no dependencies, no bundler, no package manager.
+The script starts a loopback-only server, prints a URL, and opens your browser;
+it works fully offline. To play from a phone or tablet on the same WiFi, use
+`bash run.sh -addr :4700` and open one of the LAN URLs it prints.
 
-This path exists for completeness and as a fallback, but it is not the intended
-one: a local server on a laptop cannot give you a touchscreen, and pairing a
-tablet to it over your LAN is exactly the setup the hosted URL avoids.
+This path exists so the repo stands on its own, but it is not the intended one:
+a local server on a laptop cannot give you a touchscreen, and pairing a tablet
+to it over your network is exactly the setup the hosted URL avoids.
 
 ## How to play
 
@@ -154,8 +153,9 @@ ceiling here is the finger, not the alphabet.
 - **A miss buzzes and flashes red.** Deliberately loud — under double-penalized
   scoring an unnoticed miss is worth two, and the fastest way to lose is to
   keep sprinting past errors.
-- **Everything is local.** The offline bundle makes no network requests of any
-  kind; the run is scored by the loopback server the launcher started.
+- **No third-party anything.** The page loads no CDN script, stylesheet, font,
+  or image — every asset comes from the same server that served the page, which
+  a test enforces. Run it from a clone and it works with the network off.
 
 ## How it's built
 

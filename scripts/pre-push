@@ -8,9 +8,14 @@ echo "pre-push: go vet + tests"
 go vet ./...
 go test ./...
 
-# Full ship gate (build + unzip + headless scored run, ~2 min). Skip with
-# SKIP_GATE=1 when iterating on something unrelated — CI still enforces it.
-if [[ "${SKIP_GATE:-}" != "1" ]]; then
-  echo "pre-push: ship gate (SKIP_GATE=1 to skip locally)"
-  (cd lab && .venv/bin/python ship_gate.py)
-fi
+# The ship gate used to run here: it unzipped dist/bitrate.zip and drove a
+# headless scored run to prove the grader's offline path worked. There is no ZIP
+# any more (spec §8 — the submission is the deployed site plus the public repo),
+# so the gate has nothing to unzip and is not invoked. `lab/ship_gate.py` is kept
+# on disk because most of it — drive a real scored run headlessly, assert the
+# results card, assert the server and reference scores agree, assert zero
+# non-localhost requests — is still exactly what we want to assert against a
+# running server rather than a bundle. Repointing it at a plain `run.sh` is the
+# open task; until then the checks above are what gates a push.
+#
+# SKIP_GATE is still honoured so existing muscle memory and scripts don't break.
