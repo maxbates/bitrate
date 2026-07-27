@@ -356,6 +356,7 @@ async function startRun(scored) {
     flags: {},
     submitted: false,
   };
+  accHintShown = false; // once per practice run, so a new bout can earn it again
   setState(scored ? 'armed' : 'practice');
   placeTarget();
   renderHud();
@@ -413,6 +414,7 @@ function closeArmPrompt() {
 function showArmPrompt() {
   if (armPromptShown || $('arm-prompt')) return;
   armPromptShown = true;
+  hideAccuracyHint(); // one message at a time; the card is the louder one
   renderPracticeHelp(); // escalate the header button to tier 2
 
   const wrap = document.createElement('div');
@@ -445,8 +447,85 @@ function showArmPrompt() {
   });
 }
 
+// ---- the accuracy hint ----
+// Drum pad's one self-inflicted wound is a tile the hand can't reliably hit.
+// Errors are double-penalized (§1: a miss forfeits its +1 *and* subtracts 1),
+// so a player at 80% is usually losing more to misses than the denser grid's
+// extra bits/tap are worth — and from the inside that is invisible, because a
+// miss costs exactly as much *time* as a hit and the board keeps moving. So say
+// it in the player's own numbers, once, during practice, while the fix is free.
+//
+// Touch only: the ask was drum pad, which is the game that ships. Pixel lens
+// has the same arithmetic and could take this by dropping the mode check.
+//
+// Deliberately **static** — both figures are a snapshot of the moment it fired,
+// not a live readout. A number that moves while you read it invites watching the
+// banner instead of the board, and the HUD is already the live instrument.
+const ACC_HINT_MIN = 30;       // selections before the accuracy figure means anything
+const ACC_HINT_MAX_ACC = 0.85; // at or below this, misses are worth talking about
+const ACC_HINT_MS = 10000;     // it says one thing; it does not need to stay
+const ACC_HINT_WIN_MS = 60000; // == the practice HUD's trailing window (see below)
+let accHintShown = false;      // once per practice run
+let accHintTimer = null;
+
+// The next size up in this mode's menu, or null when already on the largest —
+// in which case "try a bigger tile" is advice the settings sheet can't honour.
+function nextCellUp() {
+  const bigger = CELL_OPTS[inputMode].filter((v) => v > cellMm);
+  return bigger.length ? bigger[0] : null;
+}
+
+function tickAccuracyHint() {
+  if (accHintShown || inputMode !== 'touch') return;
+  if (state !== 'practice' || !run || !run.started) return;
+  const nowT = elapsedMsOf(run);
+  // Trailing window, matching the practice HUD: the advice is about how the
+  // player is tapping *now*, and a warm-up they've since grown out of should
+  // not keep triggering it half a session later.
+  const tr = R.trailingBps(run.keylog, run.bits, nowT, ACC_HINT_WIN_MS);
+  const n = tr.sc + tr.si;
+  if (n < ACC_HINT_MIN) return;
+  const acc = tr.sc / n;
+  if (acc > ACC_HINT_MAX_ACC) return;
+
+  // Same denominator clamp as BitrateResults.trailingBps, so the hypothetical
+  // and the live figure above it are the same kind of number and can be read
+  // against each other. net = n(2a − 1): every point of accuracy moves the net
+  // by two selections, which is the double penalty stated as arithmetic.
+  const secs = Math.max(Math.min(ACC_HINT_WIN_MS, nowT), 1000) / 1000;
+  const at = (a) => (run.bits * n * (2 * a - 1)) / secs;
+  const bigger = nextCellUp();
+  showAccuracyHint(
+    '<b>' + Math.round(acc * 100) + '%</b> of your last <b>' + n + '</b> taps landed, and a miss ' +
+    'costs you double — ' + (bigger
+      ? 'try <b>' + bigger + ' mm</b> tiles in settings.'
+      : 'these are already the biggest tiles, so ease off the pace instead.') +
+    ' At that same pace, <b>95%</b> accuracy would be <b>' + at(0.95).toFixed(1) +
+    '</b> bits/s and <b>100%</b> would be <b>' + at(1).toFixed(1) + '</b>.');
+}
+
+function showAccuracyHint(html) {
+  accHintShown = true;
+  hideAccuracyHint();
+  const el = document.createElement('div');
+  el.id = 'acc-hint';
+  el.innerHTML = html;
+  document.body.appendChild(el);
+  accHintTimer = setTimeout(hideAccuracyHint, ACC_HINT_MS);
+}
+
+function hideAccuracyHint() {
+  if (accHintTimer) { clearTimeout(accHintTimer); accHintTimer = null; }
+  const el = $('acc-hint');
+  if (el) el.remove();
+}
+
 function setState(next) {
   state = next;
+  // The hint belongs to the one practice run that earned it: arming, scoring,
+  // the results card, or a fresh practice seed all take it down. (startRun
+  // re-arms the once-per-run flag; this only clears what's on screen.)
+  hideAccuracyHint();
   document.body.classList.toggle('armed', next === 'armed');
   overlay.hidden = next !== 'error';
   resultsEl.hidden = next !== 'done';
@@ -998,6 +1077,9 @@ async function toggleSheet() {
 
 function openSheet() {
   if (state !== 'practice') return;
+  // Opening settings is the player acting on the hint (or ignoring it on
+  // purpose); either way it has been read, so it stops competing with the sheet.
+  hideAccuracyHint();
   sheetOpen = true;
   syncSheet();
   sheetEl.classList.add('open');
@@ -1414,7 +1496,7 @@ function renderHud() {
   window.BitrateResults.renderSpark('hud-spark', run, BITS, nowT);
 }
 
-setInterval(() => { renderHud(); tickArmPrompt(); }, 1000);
+setInterval(() => { renderHud(); tickArmPrompt(); tickAccuracyHint(); }, 1000);
 
 // ---- results view (shared renderer — spec §4.3) ----
 
@@ -1507,6 +1589,12 @@ window.pixelDebug = {
   showArmPrompt: () => showArmPrompt(),
   recommended: () => recommendedSettings(),
   atRecommended: () => atRecommended(),
+  // The accuracy hint: its rendered text ('' when nothing is up), whether this
+  // practice run has spent its one showing, and a way to evaluate the trigger
+  // now rather than waiting out the 1 Hz tick.
+  accHintText: () => ($('acc-hint') ? $('acc-hint').textContent : ''),
+  accHintSpent: () => accHintShown,
+  tickAccuracyHint: () => tickAccuracyHint(),
   // Dispatch a real pointerdown at a cell's center (pointerType defaults to the
   // current input mode) — exercises the same handler a finger/mouse would.
   tapCell: (idx, type) => {

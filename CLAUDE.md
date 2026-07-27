@@ -399,6 +399,21 @@ different mark from `.on`, because "what am I on" and "what should I be on" are
 different questions), and restorable via "back to recommended". Values come from
 the actual best scored runs, not taste.
 
+**Built 2026-07-27 — the practice accuracy hint** (spec §9, after the arm
+affordance). Drum pad only, `practice` only: when the trailing-60 s window holds
+**≥30 selections at ≤85% accuracy**, one banner says so, names the next tile size
+up, and prices the gap — *"at that same pace, 95% would be 12.4 bits/s and 100%
+would be 13.8"*. The second sentence is the point: accuracy as a percentage is a
+scolding, accuracy as bits left on the table is an argument, and `net = n(2a−1)`
+is the double penalty made legible. Figures are a **static snapshot**, not a live
+readout. Once per practice run; dismissed by settings, arming, a new bout, or
+10 s. Fires on the existing 1 Hz tick, so nothing new runs in the tap path. It
+sits over the top row of cells because it cannot push `#field` down without
+moving N — same trade as `#device-warn`, minimised by being wide and shallow.
+**CSS trap:** `position: fixed` + `left: 50%` shrink-to-fits to 50vw; centre with
+`left/right: 0; margin-inline: auto; width: fit-content` (`#device-warn` still
+has this bug). Hooks: `pixelDebug.accHintText/accHintSpent/tickAccuracyHint`.
+
 **Built 2026-07-26 — liveness hardening** (spec §8, tests in
 `server/liveness_test.go`). The site is now the deliverable, so a failed request
 is fine and a dead process is not. Fixed one critical (unbounded pace-bin
