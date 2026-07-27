@@ -15,6 +15,10 @@ STACK=bitrate
 REGION=us-east-1
 TEMPLATE=deploy/aws/cloudformation.yaml
 TOKEN_FILE="${HOME}/.bitrate/export-token"
+# Passed explicitly for the same reason AmiId is: `cloudformation deploy` reuses
+# the PREVIOUS value of any parameter you don't override, so a template-only
+# change to a default is silently ignored on an existing stack.
+ALERT_EMAIL="${BITRATE_ALERT_EMAIL:-maxbates@gmail.com}"
 
 # --- export token: generated once, persisted (never in the repo). Redeploys
 #     reuse it so pull-to-local (which presents it) keeps working. ---
@@ -43,7 +47,7 @@ aws cloudformation deploy \
   --stack-name "$STACK" \
   --template-file "$TEMPLATE" \
   --capabilities CAPABILITY_IAM \
-  --parameter-overrides ExportToken="$TOKEN" AmiId="$AMI_PIN" \
+  --parameter-overrides ExportToken="$TOKEN" AmiId="$AMI_PIN" AlertEmail="$ALERT_EMAIL" \
   --no-fail-on-empty-changeset
 
 read_out() {

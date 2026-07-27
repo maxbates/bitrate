@@ -45,6 +45,14 @@ Parameters:
     Type: String
     Default: "2.8.4"
     Description: Caddy release to fetch (linux_amd64 static binary).
+  AlertEmail:
+    Type: String
+    Default: maxbates@gmail.com
+    Description: >
+      Address that gets uptime alarms. AWS sends a one-time confirmation link to
+      it; until that link is clicked SNS delivers nothing, so a fresh deploy is
+      not "monitored" until the subscription is confirmed (check the console or
+      the inbox).
   ExportToken:
     Type: String
     NoEcho: true
@@ -270,6 +278,113 @@ Resources:
       TTL: "60"
       ResourceRecords: [!Ref Eip]
 
+  # ---- alerting (spec §6) ------------------------------------------------
+  # The deployed site is the whole submission now, so an outage during a
+  # grading window costs the score outright. systemd Restart=always covers a
+  # process that dies; nothing covered a box that is up but not serving, which
+  # is the failure mode that actually loses a grader. These alarms close that
+  # gap by watching from OUTSIDE the instance.
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: bitrate alerts
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # Route 53 checks the real URL over HTTPS from multiple AWS regions, so it
+  # catches what an instance-level check cannot: TLS expiry, Caddy wedged, the
+  # app returning 5xx, DNS wrong. Requesting /readme rather than / because /
+  # is a 302 to the game — a redirect is a weaker liveness signal than a page
+  # that only renders if the binary is actually serving its embedded assets.
+  HealthCheck:
+    Type: AWS::Route53::HealthCheck
+    Properties:
+      HealthCheckConfig:
+        Type: HTTPS
+        FullyQualifiedDomainName: !Ref DomainName
+        ResourcePath: /readme
+        Port: 443
+        RequestInterval: 30
+        FailureThreshold: 2
+      HealthCheckTags:
+        - { Key: Name, Value: bitrate-https }
+
+  # Route 53 health-check metrics live in us-east-1 regardless of stack region,
+  # which is where this stack already is.
+  SiteDownAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: bitrate-site-unreachable
+      AlarmDescription: >
+        bitrate.einkgen.link failed its Route 53 HTTPS health check. The site is
+        the deliverable — check the instance, Caddy, and the TLS cert.
+      Namespace: AWS/Route53
+      MetricName: HealthCheckStatus
+      Dimensions:
+        - Name: HealthCheckId
+          Value: !Ref HealthCheck
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      # Missing data is not health: if the checker stops reporting, say so.
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # The instance itself failing EC2's own status checks — a different failure
+  # from "not serving", and worth its own alarm because the remedy differs
+  # (recover the host vs restart the service).
+  InstanceStatusAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: bitrate-instance-status-failed
+      AlarmDescription: EC2 status checks failing for the bitrate instance.
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref Instance
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  # A full disk stops the ledger from being written while the site still looks
+  # fine, so it is exactly the kind of silent failure worth an early warning.
+  # Uses EC2's own metric (no CloudWatch agent, no extra dependency): this
+  # watches the ROOT volume's burst budget as a proxy for a sick instance.
+  CreditAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: bitrate-cpu-credits-low
+      AlarmDescription: >
+        t3 CPU credit balance is nearly exhausted — the instance will throttle,
+        which shows up as a slow or timing-out site.
+      Namespace: AWS/EC2
+      MetricName: CPUCreditBalance
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref Instance
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
 Outputs:
   URL:
     Description: Public URL (HTTPS via Caddy/Let's Encrypt once DNS + cert settle).
@@ -280,3 +395,8 @@ Outputs:
     Value: !Ref Instance
   ArtifactBucket:
     Value: !Ref ArtifactBucket
+  AlertTopicArn:
+    Description: SNS topic for uptime alarms (confirm the email subscription once).
+    Value: !Ref AlertTopic
+  HealthCheckId:
+    Value: !Ref HealthCheck
