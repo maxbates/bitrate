@@ -209,6 +209,67 @@ def main() -> int:
             if full_band > 8:
                 fails.append("quadrature model wrong — revisit the premise")
 
+            # 2d. The manual trigger. At low SNR no automatic placement can be
+            #     right — a threshold has to sit above the room's peaks AND
+            #     below the voice, and at ~8 dB that window is empty. So the
+            #     player gets the dial and a live count of what it fires on,
+            #     which is better evidence than any arithmetic here.
+            page.evaluate("""() => {
+              lvl.result = window.voiceDebug.measureFake(
+                {ambient: 0.004, speech: 0.010, words: 5});   // room -48, voice -40
+              lvl.phase = 'result';
+              renderLevelPanel();
+            }""")
+            shown = page.evaluate("() => !document.getElementById('lv-tune').hidden")
+            print(f"  {'ok  ' if shown else 'FAIL'} low-SNR result offers the manual trigger")
+            if not shown:
+                fails.append("no manual trigger offered on a result that cannot be placed automatically")
+
+            advice = page.locator("#lv-readout").inner_text().lower()
+            # The first version of this told a player who had just OVER-triggered
+            # ("heard 8 of 5 words") that quiet sounds may be missed — advice
+            # pointing the opposite way from the symptom in front of them.
+            ok = "drag" in advice and "above the room" in advice
+            print(f"  {'ok  ' if ok else 'FAIL'} ...and explains the constraint rather than "
+                  f"telling them to find a quieter room")
+            if not ok:
+                fails.append(f"low-SNR advice does not point at the manual trigger: {advice!r}")
+
+            # Dragging must move the trigger, retitle the accept button, and
+            # reset the count (a count mixing several thresholds means nothing).
+            page.evaluate("""() => {
+              const s = document.getElementById('lv-slider');
+              s.value = '-43';
+              s.dispatchEvent(new Event('input', {bubbles: true}));
+            }""")
+            state = page.evaluate("""() => ({
+              thr: window.voiceDebug.activeThr(),
+              shown: document.getElementById('lv-thr').textContent,
+              accept: document.getElementById('lv-accept').textContent,
+              fires: lvl.fires,
+            })""")
+            want = 10 ** (-43 / 20)
+            ok = (abs(state["thr"] - want) < 1e-6 and "-43" in state["shown"]
+                  and "-43" in state["accept"] and state["fires"] == 0)
+            print(f"  {'ok  ' if ok else 'FAIL'} dragging sets the trigger "
+                  f"({state['shown']}), retitles accept, and resets the count")
+            if not ok:
+                fails.append(f"manual trigger did not take effect: {state}")
+
+            # And it must be what gets saved.
+            page.evaluate("acceptLevel()")
+            page.wait_for_timeout(300)
+            saved = page.evaluate("() => window.voiceDebug.measured()")
+            ok = saved and abs(saved["thr"] - want) < 1e-6 and saved.get("manual") is True
+            print(f"  {'ok  ' if ok else 'FAIL'} the player's trigger is what gets saved")
+            if not ok:
+                fails.append(f"manual trigger not persisted: {saved}")
+            # That save is real, so clear it: the next step is specifically
+            # about what happens with NOTHING measured.
+            page.evaluate("localStorage.removeItem('bitrate_voice_level_v1')")
+            page.reload()
+            page.wait_for_selector("#level:not([hidden])", timeout=10_000)
+
             # 3. Skippable, and the skip falls back to the middle preset.
             page.evaluate("window.voiceDebug.skipLevel()")
             page.wait_for_selector("#calib:not([hidden])", timeout=5_000)

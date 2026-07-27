@@ -625,6 +625,7 @@ function startLevelCheck(next) {
   lvl = {
     phase: 'settle', t0: 0, ambient: [], speech: [],
     ambRef: 0, voiced: 0, lastVoicedT: 0, result: null,
+    manualThr: null, fires: 0, firing: false, fireQuiet: 0,
     next: next || afterLevel,
   };
   setState('level');
@@ -679,7 +680,42 @@ function levelFrame(f) {
     // sit through the full window.
     const done = lvl.voiced >= LV.MIN_VOICED && f.t - lvl.lastVoicedT > LV.END_QUIET_MS;
     if (done || f.t - lvl.t0 >= LV.SPEAK_MAX_MS) finishLevelCheck();
+    return;
   }
+  if (lvl.phase === 'result') liveFireCheck(f);
+}
+
+// While the result is up, keep counting what the current trigger would fire
+// on. This is the whole point of the manual control: the player talks, watches
+// the number, and stops when it matches the words they said. No amount of
+// arithmetic on my part beats one person saying "five" and seeing 5.
+function liveFireCheck(f) {
+  const thr = activeThr();
+  if (f.rms > thr) {
+    if (!lvl.firing) { lvl.firing = true; lvl.fires++; renderFires(); }
+    lvl.fireQuiet = 0;
+  } else if (lvl.firing) {
+    if (++lvl.fireQuiet >= END_QUIET_FRAMES) lvl.firing = false;
+  }
+}
+
+// The trigger currently in force on the panel: the player's if they've touched
+// the slider, otherwise the measured one.
+function activeThr() {
+  if (!lvl) return 0;
+  return lvl.manualThr != null ? lvl.manualThr : (lvl.result ? lvl.result.thr : 0);
+}
+
+function renderFires() {
+  const el = $('lv-fires');
+  if (!el || !lvl) return;
+  const n = lvl.fires;
+  const cls = n === LV.PHRASE.length ? 'ok' : n === 0 ? '' : 'warn';
+  el.innerHTML = 'fired <b class="' + cls + '">' + n + '</b>× · '
+    + (n === 0 ? 'say the words — nothing is registering yet'
+      : n > LV.PHRASE.length ? 'picking up your room — drag right'
+        : n < LV.PHRASE.length ? 'missing words — drag left'
+          : 'that\'s five. good.');
 }
 
 // Push the buffered frames back through the live segmenter with a candidate
@@ -806,7 +842,10 @@ function acceptLevel() {
   const r = lvl.result;
   const next = lvl.next;
   if (!r.heardNothing) {
-    measured = { ambient: r.ambient, speech: r.speech, thr: r.thr, snrDb: r.snrDb, syllables: r.syllables };
+    // The player's trigger wins over the measured one — they had the live
+    // count in front of them, which is better evidence than one phrase.
+    measured = { ambient: r.ambient, speech: r.speech, thr: activeThr(),
+                 snrDb: r.snrDb, syllables: r.syllables, manual: lvl.manualThr != null };
     saveLevel(measured);
     measured = loadLevel() || measured;
     // The tracker starts at the room we just measured instead of walking to it
@@ -828,6 +867,7 @@ function renderLevelPanel() {
   meter.classList.remove('has-trigger');
   readout.innerHTML = '';
   foot.innerHTML = '';
+  $('lv-tune').hidden = true;
   if (!lvl) return;
 
   // A tappable skip, not just Esc: the device most likely to have a mic
@@ -852,7 +892,18 @@ function renderLevelPanel() {
   const r = lvl.result;
   step.textContent = 'result';
   meter.classList.add('has-trigger');
-  document.documentElement.style.setProperty('--lv-trigger', dbPct(r.thr).toFixed(1) + '%');
+  syncTriggerLine();
+
+  // The manual control is offered on every result, not hidden behind a
+  // failure: automatic placement is a guess from one phrase, and the player
+  // watching a live count is better evidence than the guess. It leads when the
+  // measurement couldn't find a workable gap.
+  if (!r.heardNothing) {
+    $('lv-tune').hidden = false;
+    const slider = $('lv-slider');
+    slider.value = String(Math.round(dbfs(activeThr())));
+    renderFires();
+  }
 
   if (r.heardNothing) {
     prompt.innerHTML = '<span class="quiet">didn\'t hear you</span>';
@@ -869,31 +920,67 @@ function renderLevelPanel() {
       'room <b>' + dbfs(r.ambient).toFixed(0) + ' dB</b>' +
       ' · voice <b>' + dbfs(r.speech).toFixed(0) + ' dB</b>' +
       ' · headroom <b>' + r.snrDb.toFixed(0) + ' dB</b><br>' +
-      'trigger set to <b>' + dbfs(r.thr).toFixed(0) + ' dB</b> · ' + counted +
+      'trigger set to <b id="lv-thr">' + dbfs(r.thr).toFixed(0) + ' dB</b>' +
+      '<span id="lv-thr-note"></span> · ' + counted +
       // Only when it actually did something. On a clean mic this is ~0 dB and
       // saying so would be noise about noise.
       (r.rumbleDb >= 3
         ? '<br><span class="ok">' + r.rumbleDb.toFixed(0) + ' dB of low-frequency rumble filtered out</span>' +
           ' — fans, traffic and desk hum sit below your voice and are ignored'
         : '') +
-      (r.noisy && r.processed
-        // Naming the cause matters: this player is usually in a silent room,
-        // and telling them to find a quieter one sends them chasing nothing.
-        ? '<br><span class="warn">your microphone is doing its own noise processing — common on Bluetooth headsets like AirPods, and it flattens the gap between your voice and the room.</span>' +
-          '<br>using a best-effort trigger. if sounds get missed, switch to the built-in microphone and re-check.'
-        : r.noisy
-          ? '<br><span class="warn">too much background noise for your voice level — move somewhere quieter, or speak up. quiet sounds may be missed.</span>' +
-            '<br>on a Bluetooth headset? the built-in microphone usually does better here.'
-          : r.syllables > LV.PHRASE.length
-          ? '<br>extra words usually means background noise — try again somewhere quieter'
-          : r.syllables < LV.PHRASE.length
-            ? '<br>say the words a little louder, with a small gap between each'
-            : '');
+      levelAdvice(r);
   }
   foot.innerHTML =
     (r.heardNothing ? '' : '<button type="button" class="act click" id="lv-accept"><kbd>Enter</kbd>use this</button>') +
     '<button type="button" class="act click" id="lv-again">measure again</button>';
 }
+
+// What to tell the player, and it has to match what actually happened. The
+// first version said "quiet sounds may be missed" on a result that had
+// over-triggered and heard EIGHT of five words — advice pointing the opposite
+// way from the symptom in front of them.
+function levelAdvice(r) {
+  let s = '';
+  if (r.noisy && r.processed) {
+    // Naming the cause matters: this player is usually in a silent room, and
+    // telling them to find a quieter one sends them chasing nothing.
+    s = '<span class="warn">your microphone is doing its own noise processing — common on Bluetooth headsets like AirPods, and it flattens the gap between your voice and the room.</span>'
+      + '<br>set the trigger by hand below, or switch to the built-in microphone and re-check.';
+  } else if (r.noisy) {
+    s = '<span class="warn">your voice is only ' + r.snrDb.toFixed(0) + ' dB above the room — too little for any one trigger to sit above the room <em>and</em> below you.</span>'
+      + '<br>set it by hand below: say the five words and drag until it fires five times.'
+      + ' a laptop fan under the microphone is a common cause, so it is worth checking what the machine is busy with.';
+  } else if (r.syllables > LV.PHRASE.length) {
+    s = 'the trigger is catching your room as well as your voice — drag it right until it fires five times.';
+  } else if (r.syllables < LV.PHRASE.length) {
+    s = 'some words did not register — drag the trigger left, or say them a little louder.';
+  }
+  return s ? '<br>' + s : '';
+}
+
+function syncTriggerLine() {
+  document.documentElement.style.setProperty('--lv-trigger', dbPct(activeThr()).toFixed(1) + '%');
+}
+
+// Dragging resets the count: the number has to describe the trigger you are
+// looking at, not a mixture of every trigger you passed through on the way.
+$('lv-slider').addEventListener('input', (e) => {
+  if (!lvl || !lvl.result) return;
+  lvl.manualThr = Math.pow(10, Number(e.target.value) / 20);
+  lvl.fires = 0;
+  lvl.firing = false;
+  if (lvl.autoTimer) { clearTimeout(lvl.autoTimer); lvl.autoTimer = null; }
+  syncTriggerLine();
+  renderFires();
+  // The readout has to follow the dial, or the panel shows one number while
+  // the player is looking at another.
+  const db = Number(e.target.value).toFixed(0);
+  const thrEl = $('lv-thr'), noteEl = $('lv-thr-note');
+  if (thrEl) thrEl.textContent = db + ' dB';
+  if (noteEl) noteEl.textContent = ' (measured ' + dbfs(lvl.result.thr).toFixed(0) + ')';
+  const acc = $('lv-accept');
+  if (acc) acc.innerHTML = '<kbd>Enter</kbd>use ' + db + ' dB';
+});
 
 $('lv-foot').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -1685,6 +1772,7 @@ window.voiceDebug = {
   // The energy path's filter corners, so a test can assert the VAD is
   // band-limited rather than trusting that it still is.
   band: () => ({ hp: HP_HZ, lp: LP_HZ, filtered: !!(analyser && rawAnalyser) }),
+  activeThr: () => activeThr(),
   skipLevel() {
     if (state !== 'level') return 'not in level check';
     skipLevelCheck();

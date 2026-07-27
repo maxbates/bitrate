@@ -445,6 +445,16 @@ stated to the player in prose, treat the prose as a testable assertion.**
   the same 5 dB on the *built-in* mic. **When a symptom survives a change of
   device, the device is not the variable.** The AGC handling was kept — it is
   right about a different case — but it was not this bug.
+- **...and then the player got the dial.** Band-limiting fixed the rumble but
+  the owner's real room was still only 8 dB of headroom, and the check flipped
+  from deaf to over-triggering ("heard 8 of 5 words"). A threshold must sit
+  above the room's *peaks* and below the voice; peaks run 6–10 dB over the room
+  median, so at 8 dB the target window is **zero dB wide** and no automatic
+  placement is correct. The result panel now always offers a **manual trigger
+  slider with a live count of what it fires on** — say five words, drag until it
+  reads 5. **When a measurement must survive hardware you cannot enumerate, ship
+  the measurement AND the override, not a cleverer estimator.** Three guesses at
+  the estimator each failed on real hardware; the dial cannot.
 
 **Built 2026-07-26 — liveness hardening** (spec §8, tests in
 `server/liveness_test.go`). The site is now the deliverable, so a failed request

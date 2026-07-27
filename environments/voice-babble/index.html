@@ -53,6 +53,15 @@
     <div id="lv-step"></div>
     <div id="lv-prompt"></div>
     <div id="lv-meter"><span id="lv-meter-bar"></span></div>
+    <!-- Manual trigger, with the live meter above it and a count of what it
+         would fire on. Automatic placement needs the voice to sit clearly
+         above the room; when it doesn't, no number is the right number and
+         the honest move is to let the player set it by eye in five seconds. -->
+    <div id="lv-tune" hidden>
+      <label for="lv-slider">trigger</label>
+      <input type="range" id="lv-slider" min="-66" max="-6" step="1">
+      <span id="lv-fires"></span>
+    </div>
     <div id="lv-readout"></div>
     <div class="c-foot" id="lv-foot"></div>
   </section>
