@@ -24,7 +24,7 @@ Where N = alphabet size, Sc = correct interactions, Si = incorrect interactions.
 
 In Drum Pad, N = the number of tiles (determined by viewport and tile size), and taps are correct or not (judged at landing, there is no backspace in this game). Squares are selected at I.I.D. 
 
-Using the default Drum Pad configuration, **players scored around 10 - 15 bps during testing**.
+Using the default Drum Pad configuration, **players scored around 10 - 15 bps during testing**, with a max score observed of about 16.2 bps.
 
 ## Motivations
 
@@ -48,6 +48,8 @@ Stimulus and travel: Despite the fingers being fixed on a keyboard and traveling
 
 Grid size: Grid size trades off bits with speed (finger/arm travel) and accuracy (misses are double-penalized). Experimenting with grid size found that smaller squares (12mm) worked best on a phone and larger squares (20mm) best on a tablet, with caveats around practice impacting measurements. By Fitt's law, travel time of 2 arms/fingers dominates on a tablet and larger stops are preferable, and a phone with less travel benefits from extra bits of a denser grid. Cells shrink as 1/sqrt(N), so difficulty grows as ~1/2•log2(N) while bits grow as ~log2(N)
 
+Data driven: Ultimately, grid size defaults were determined by testing with ~8 people across a wide range of abilities.
+
 ### Design, improvements, affordances
 
 - Defaults: player testing informs default recommended grid size, etc., but configurable depending on user's preferences, finger size, desire to prioritize speed / accuracy
@@ -68,7 +70,7 @@ Once it became clear touch was a leading contender input device, it made more se
 
 I happened to have a cheap URL already purchased in S3 for an e-ink display project, so I just reused that. So, this game is hosted on a subdomain `bitrate` of `einkgen.link`. There is a fallback to host a static website and drive the games solely through the front-end, in case the server falls down for whatever reason.
 
-The bundle is a single static Go binary — **standard library only, no cgo, no dependencies** serving an embedded vanilla-JS frontend. No framework, build step, bundler, CDN, or package manager. Charts are hand-rolled SVG, tones are WebAudio, and markdown is rendered by a small markdown subset in the server itself. The run.sh script starts a loopback-only server, prints a URL, and opens your browser; it works fully offline. 
+The bundle is a single static Go binary — standard library only, no cgo, no dependencies serving an embedded vanilla-JS frontend. No framework, build step, bundler, CDN, or package manager. Charts are hand-rolled SVG, tones are WebAudio, and markdown is rendered by a small markdown subset in the server itself. The run.sh script starts a loopback-only server, prints a URL, and opens your browser; it works fully offline. 
 
 The self-contained bundle exists so the repo could be distributed on its own, but a local server on a laptop cannot give you a touchscreen, and ultimately it's easier to connect your touch device (and get HTTPS needed for some games, e.g. for webcam or mic access on iOS) using a hosted site. 
 
@@ -82,9 +84,7 @@ bash run.sh
 
 To play from a phone or tablet on the same WiFi, use `bash run.sh -addr :4700` and open one of the LAN URLs it prints.
 
-
 ## Ideas & graveyard
-
 
 Built and measured:
 
@@ -131,4 +131,3 @@ Alphabet / config variants:
 - home row only (N=9) → must sustain 1.48× the cadence to break even
 - multi-character doublets → bits/sec is invariant to bracketing, and compounds make scoring all-or-nothing, which is poison under double-penalized errors
 - word-level targets → banned by name; economics were a wash anyway, which is why the ban cost nothing
-
