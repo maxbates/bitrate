@@ -113,6 +113,17 @@ Lookahead also **immunizes against display latency**: with a full buffer the pla
 
 **Chunking on by default (groups of 4) — 2026-07-25.** Separators are display-only glyphs and never targets (so N, the sequence, and the scoring are untouched), but they give the eye a landing place in an otherwise featureless random stream, which is what an unfamiliar player needs before they will sit still for a scored run. Off / 3 / 5 / 6 remain one tap away in the settings sheet.
 
+**Keyboard map under the stream, on by default — `keyboard` (2026-07-26).** The stimulus in this game is a letter *glyph*; the response is a *spatial* motor act. §2's stimulus-response compatibility principle says the stimulus should **be** the response, and a bare glyph isn't: a practised typist has the mapping overlearned, but a first-session player — which is the only kind that gets graded (§3) — translates. So the stream is joined by a QWERTY map that draws the key where it physically sits: **the stream says which letter, the map says which finger.** Filled yellow = act now, green outline = next — deliberately drum pad's colour grammar, so the two games teach one visual language rather than two.
+
+It is a **config key, not a local preference**, and that is the load-bearing choice: it sits on the same axis as `lookahead` and `chunk_size` — all three are presentation-only and none touch the alphabet, the sequence, or the scoring, but all three plausibly move the bit rate, so two players with different settings **are not running the same experiment**. Content-addressing then does the work for free: on and off are separate variants and the leaderboard compares like with like. (Contrast the correct-tap ding in drum pad, which deliberately widened the existing `audio_feedback` flag rather than adding a sibling key — feedback *after* a selection doesn't change the stimulus, so splitting the board for it would have bought nothing.) Adding the key re-mints stream typing's default hash, which is the honest price of making the axis measurable.
+
+Two invariants, both guarded in code:
+
+- **It never reveals more of the future than the stream already does.** At `lookahead: 0` the stream shows no upcoming character, so a green "next" key would hand the player information the config says they don't get. The green mark is gated on `lookahead >= 1`. The slider's minimum is 1, so this is unreachable through the sheet — but a `?cfg=` relaunch of a stored variant can carry 0 and nothing clamps it on load, so the guard is real rather than decorative.
+- **It only offers keys that are in play.** The alphabet is tunable, so keys outside `CONFIG.alphabet` render inert instead of implying a target that can never come up, and the digit row is built only when the alphabet contains digits.
+
+Layout discipline, inherited from the pinned-fixation rule above: the highlight changes **colour only** — never size, border width, or position. The map lives inside `#stage`, a centred flex column, so a reflow there would move the fixation point mid-run, which is the thing this whole section is built around. Hidden where there is no room (phones, short windows) and whenever the soft keyboard is up, since a phone is typing on glass and the real keys are already on screen.
+
 ### 2.4 Error policy: advance always
 
 Every keypress consumes the current target, correct or not. Rationale:

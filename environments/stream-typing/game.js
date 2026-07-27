@@ -24,6 +24,14 @@ const DEFAULTS = {
   // an unfamiliar player needs before they'll sit still for a scored run.
   // Off and 3/5/6 are one tap away in the sheet.
   chunk_size: 4,
+  // The keyboard map under the stream (see buildKeyboard). A *config* key rather
+  // than a local preference, deliberately: it belongs on the same axis as
+  // lookahead and chunk_size — all three are presentation-only and none touch
+  // the alphabet or the scoring, but all three plausibly move the bit rate, so
+  // two players with different settings are not running the same experiment.
+  // Content-addressing then does its job: keyboard-on and keyboard-off are
+  // separate variants and the leaderboard compares like with like.
+  keyboard: true,
   audio_feedback: false,
   error_policy: 'advance',
   backspace: true,
@@ -32,7 +40,7 @@ const DEFAULTS = {
   font_stack: 'system-mono',
 };
 const SETTINGS_KEY = 'bitrate_settings_v1';
-const TUNABLE = ['alphabet', 'lookahead', 'chunk_size', 'audio_feedback'];
+const TUNABLE = ['alphabet', 'lookahead', 'chunk_size', 'keyboard', 'audio_feedback'];
 // Short names for the alphabets the sheet offers, keyed by size (see index.html).
 const ALPHA_LABELS = { 9: 'home row', 26: 'a–z', 36: 'a–z 0–9' };
 
@@ -221,6 +229,11 @@ function setState(next) {
 // ---- rendering: pinned cursor, text flows leftward into it (spec §2.3) ----
 
 function buildStream(seq) {
+  // Rebuilt per bout rather than once at boot: the alphabet is tunable, so which
+  // keys are in play (and whether there is a digit row) can change between runs.
+  // Four rows of spans is nothing, and this is nowhere near the keydown path.
+  buildKeyboard();
+  kbCur = kbNext = null;
   streamEl.textContent = '';
   spans = new Array(seq.length); // letter spans only, indexed by seq position
   const frag = document.createDocumentFragment();
@@ -261,6 +274,113 @@ function moveStream() {
   const offsetUnits = run.pos + seps(run.pos);
   streamEl.style.transform =
     'translateY(-50%) translateX(' + -offsetUnits * charW + 'px)';
+  syncKeyboard();
+}
+
+// ---- keyboard map (display only) ----
+//
+// The stimulus here is a letter *glyph*; the response is a spatial motor act.
+// A practised typist has that mapping overlearned, but a first-session player
+// translates — and translation is exactly the cost §2 wants removed
+// (stimulus-response compatibility: the stimulus should *be* the response).
+// Drawing the key where it physically sits gives the eye a spatial target, so
+// the stream says which letter and the map says which finger.
+//
+// Same colour grammar as drum pad, deliberately, so the two games teach one
+// visual language: filled yellow = act on this now, green outline = next.
+//
+// Nothing here affects scoring, ground truth, or the sequence. Two properties
+// it must keep, though:
+//
+//   * It never shows more of the future than the stream already does. With
+//     lookahead 0 the stream reveals no upcoming character, so highlighting the
+//     next key would hand the player information the config says they don't get.
+//     The green mark is therefore gated on CONFIG.lookahead >= 1.
+//   * It only offers keys that are actually in play. The alphabet is tunable
+//     (home row, a–z, a–z 0–9), so keys outside CONFIG.alphabet render inert
+//     rather than implying a target that can never come up.
+
+// Physical rows, in the stagger a real board has. The digit row is only built
+// when the alphabet actually contains digits. Backspace sits at the right of the
+// top letter row — the closest honest place for it on a letters-only diagram —
+// and is drawn wide, like the key it stands for.
+const KB_ROWS = [
+  { keys: '1234567890', indent: 0 },
+  { keys: 'qwertyuiop', indent: 0, backspace: true },
+  { keys: 'asdfghjkl', indent: 0.5 },
+  { keys: 'zxcvbnm', indent: 1 },
+];
+
+let kbKeys = null; // char -> element, built once per config
+
+function buildKeyboard() {
+  const host = $('keyboard');
+  if (!host) return;
+  host.textContent = '';
+  kbKeys = null;
+  // Switched off: nothing built, nothing to sync, and syncKeyboard becomes a
+  // no-op via the null map — so it costs nothing on the keydown path either.
+  if (!CONFIG.keyboard) {
+    host.hidden = true;
+    return;
+  }
+  kbKeys = new Map();
+
+  const hasDigit = /[0-9]/.test(CONFIG.alphabet);
+  for (const row of KB_ROWS) {
+    if (row.keys === '1234567890' && !hasDigit) continue;
+    const r = document.createElement('div');
+    r.className = 'kb-row';
+    if (row.indent) r.style.paddingLeft = row.indent * 2.6 + 'rem';
+    for (const ch of row.keys) {
+      const k = document.createElement('span');
+      k.className = 'kb-key' + (ALPHA.has(ch) ? '' : ' kb-off');
+      k.textContent = ch;
+      if (ALPHA.has(ch)) kbKeys.set(ch, k);
+      r.appendChild(k);
+    }
+    if (row.backspace && CONFIG.backspace) {
+      const b = document.createElement('span');
+      b.className = 'kb-key kb-wide';
+      b.textContent = '⌫';
+      r.appendChild(b);
+    }
+    host.appendChild(r);
+  }
+  host.hidden = false;
+}
+
+// Called from moveStream, so it runs on every position change (including the
+// backspace path, which moves the cursor *back*) and on the initial build.
+// Cheap by construction: at most two class removals and two additions, no
+// layout read, no allocation. It sits on the keydown path, so it must stay that
+// way — no measuring, no logging, no network (spec §7).
+let kbCur = null, kbNext = null;
+
+function syncKeyboard() {
+  if (!kbKeys || !run) return;
+  const curCh = run.seq[run.pos];
+  // Only as far ahead as the stream itself reveals (see the note above).
+  const nextCh = CONFIG.lookahead >= 1 ? run.seq[run.pos + 1] : undefined;
+  const cur = curCh === undefined ? null : kbKeys.get(curCh) || null;
+  let next = nextCh === undefined ? null : kbKeys.get(nextCh) || null;
+  // The same key twice: "now" keeps the fill (it is what to press), and a repeat
+  // badge carries the fact that it comes again — the keyboard's version of the
+  // underline the stream puts on repeats. Never both marks on one key.
+  const repeat = next !== null && next === cur;
+  if (repeat) next = null;
+
+  if (cur !== kbCur) {
+    if (kbCur) kbCur.classList.remove('kb-now');
+    if (cur) cur.classList.add('kb-now');
+    kbCur = cur;
+  }
+  if (next !== kbNext) {
+    if (kbNext) kbNext.classList.remove('kb-next');
+    if (next) next.classList.add('kb-next');
+    kbNext = next;
+  }
+  if (kbCur) kbCur.classList.toggle('kb-repeat', repeat);
 }
 
 function baseClassFor(seq, i) {
@@ -946,6 +1066,7 @@ function closeSheet() {
 function syncSheet() {
   segSync('seg-alphabet', CONFIG.alphabet);
   segSync('seg-chunk', CONFIG.chunk_size ? String(CONFIG.chunk_size) : '');
+  segSync('seg-keyboard', CONFIG.keyboard ? '1' : '');
   segSync('seg-audio', CONFIG.audio_feedback ? '1' : '');
   $('set-lookahead').value = CONFIG.lookahead;
   $('lookahead-val').textContent = CONFIG.lookahead;
@@ -985,6 +1106,7 @@ function segWire(id, mutate) {
 
 segWire('seg-alphabet', (c, v) => { c.alphabet = v; });
 segWire('seg-chunk', (c, v) => { c.chunk_size = v ? Number(v) : null; });
+segWire('seg-keyboard', (c, v) => { c.keyboard = !!v; });
 segWire('seg-audio', (c, v) => { c.audio_feedback = !!v; });
 $('set-lookahead').addEventListener('input', (e) => {
   $('lookahead-val').textContent = e.target.value;
