@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Requirement 5's artifact: "include a run.sh script (or equivalent) that
-# launches the game with no exotic setup."
+
+# Science Corp submission for Maxwell Bates
 #
 # The game is a deployed web app — drum pad is a touch game, and a local server
 # on a laptop cannot hand you a touchscreen — so launching it means opening it.
@@ -13,7 +13,7 @@
 # copy-paste rather than a dead end.
 #
 # To run the game locally from source instead — offline, no deployed site
-# needed — use ./serve.sh, which needs Go.
+# needed — use ./serve.sh from the repo, which needs Go.
 set -euo pipefail
 
 GAME_URL="https://bitrate.einkgen.link"
@@ -27,9 +27,9 @@ fi
 
 cat <<BANNER
 
-  bitrate — a game for maximizing the bit rate through a human interface
+  Drum Pad — a game for maximizing the bit rate through a human interface
 
-  ▶  play      $GAME_URL   (best on a tablet or phone — it is a touch game)
+  ▶  play      $GAME_URL   (please open on a tablet or phone — it is a touch game)
   ▶  readme    $README_URL
 
 BANNER
@@ -80,7 +80,7 @@ open_url() {
 # The sleep is not cosmetic: if no browser is running yet, the first call cold
 # starts it, and a second call fired immediately can be dropped on the floor.
 if open_url "$README_URL" background; then
-  sleep 2
+  sleep 1
   open_url "$GAME_URL" || true
 else
   echo "  (couldn't open a browser — use the URLs above)"
