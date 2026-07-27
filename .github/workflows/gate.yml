@@ -1,5 +1,6 @@
 # The ship gate (spec §8), enforced on every commit: someone with nothing but
-# the public repo runs `bash run.sh` and it works, offline, first try. (There
+# the public repo runs `bash serve.sh` and it works, offline, first try (and
+# `bash run.sh`, rule 5's artifact, opens the deployed game). (There
 # is no ZIP any more — the submission is the deployed site plus this repo — so
 # the gate copies a clean tree instead of unzipping a bundle.) Linux runners
 # are the brief's guaranteed platform; x86_64 and arm64 both run the full gate.
