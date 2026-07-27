@@ -42,6 +42,14 @@
       <div id="fade-left"></div>
     </div>
     <div id="hint">type the letter at the caret · miss → backspace → retype</div>
+    <!-- Keyboard map: the stimulus is a letter glyph but the response is a
+         spatial motor act, so a first-session player does a lookup between the
+         two. Drawing the key where it physically sits makes the stimulus spatial
+         as well — the stimulus-response compatibility §2 asks for. Same colour
+         grammar as drum pad: filled yellow = now, green outline = next. Display
+         only; it never touches scoring. Built and shown from JS, which also
+         hides it when the viewport can't spare the room. -->
+    <div id="keyboard" hidden aria-hidden="true"></div>
     <div id="notice" hidden></div>
     <!-- Phantom input (spec §4.3.1): a phone has no physical keys, and a soft
          keyboard only opens over a focused field. This one is transparent and
@@ -109,6 +117,17 @@
         <button data-v="6">6</button>
         <button data-v="7">7</button>
         <button data-v="8">8</button>
+      </div>
+    </div>
+    <!-- The keyboard map under the stream. A config key, not a local
+         preference: it is presentation-only like lookahead and chunk size, but
+         like them it plausibly moves the bit rate, so on and off are separate
+         content-addressed variants and the leaderboard compares like with like. -->
+    <div class="sh-row">
+      <span class="sh-label">key map</span>
+      <div class="seg" id="seg-keyboard">
+        <button data-v="">off</button>
+        <button data-v="1">on</button>
       </div>
     </div>
     <div class="sh-row">

@@ -163,6 +163,7 @@ body.touch #kbd-catcher { pointer-events: auto; }
    keeps the middle of what is left. (#gallery-link is fixed to the layout
    viewport, which the keyboard doesn't shrink — it would sit behind it.) */
 body.kbd-open #hint,
+body.kbd-open #keyboard,
 body.kbd-open #gallery-link { display: none; }
 
 /* The header band (mode chip, config + settings, the HUD figures) and the
@@ -299,6 +300,78 @@ body.armed #caret { border-color: var(--accent); }
 #card .warn { color: var(--err); margin-top: 1rem; font-size: 14px; }
 #card .title { color: var(--dim); font-size: 14px; letter-spacing: .15em; text-transform: uppercase; margin-bottom: 1rem; }
 
+/* ---- keyboard map (display only — see syncKeyboard in game.js) ----
+
+   Why it exists: the stream says *which letter*, this says *which finger*. The
+   stimulus is a glyph and the response is a spatial act, so an unpractised
+   player translates between them; drawing the key where it physically sits
+   removes that step (spec §2, stimulus-response compatibility).
+
+   Colour grammar is drum pad's, on purpose, so the two games teach one visual
+   language: filled yellow = act now, green outline = next.
+
+   Layout discipline: the highlight must never change a key's size, border
+   width, or position. The map sits inside #stage, which is a centred flex
+   column — a reflow here would move the stream mid-run, which is the fixation
+   point the whole design is built around (spec §2.3). So only colours change. */
+#keyboard {
+  margin-top: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  /* Never the thing the eye lands on: the stream is. */
+  opacity: .85;
+}
+.kb-row { display: flex; gap: .4rem; }
+.kb-key {
+  width: 2.2rem;
+  height: 2.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--faint);
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--dim);
+  /* Colour only — see the note above. */
+  transition: background-color .08s linear, color .08s linear, border-color .08s linear;
+}
+.kb-wide { width: 3.4rem; font-size: 12px; }
+/* Not in the current alphabet: present so the board stays recognisable as a
+   keyboard, but visibly not in play, so it never implies a target that can't
+   come up. */
+.kb-off { opacity: .32; }
+
+/* Act on this now. Filled, exactly like drum pad's live cell. */
+.kb-now {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #111;
+}
+/* Next. Outlined green, exactly like drum pad's look-ahead ring — "next" must
+   never read as "now", so it gets the outline and not the fill. */
+.kb-next {
+  border-color: var(--live);
+  color: var(--live);
+  /* A wash, not a fill: next has to be findable in peripheral vision without
+     competing with the yellow key that says act now. Background only, so the
+     key's box is untouched. */
+  background: rgba(88, 179, 104, .14);
+}
+/* The same key twice in a row. The stream underlines repeats; this is that cue
+   for the map, and it rides on the filled key rather than adding a second mark
+   (an inset ring, so nothing outside the key's box changes). */
+.kb-repeat { box-shadow: inset 0 0 0 2px var(--live); }
+
+/* A short window is the other way to run out of room — the stream keeps the
+   space. */
+@media (max-height: 620px) {
+  #keyboard { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kb-key { transition: none; }
+}
+
 /* ---- narrow viewports (a phone in portrait) ----
    Half the screen goes to the soft keyboard, so the stream has to fit the
    other half: smaller glyphs, a shallower viewport, and the fixation point
@@ -306,6 +379,9 @@ body.armed #caret { border-color: var(--accent); }
    mono a 390 px screen holds ~13 characters past the caret — more than the
    default lookahead of 8 plus its chunk separators). */
 @media (max-width: 640px) {
+  /* No room, and no physical keyboard to map anyway — a phone is typing on
+     glass, where the real keys are already on screen. */
+  #keyboard { display: none; }
   #stream { font-size: 34px; left: 30%; }
   #caret { left: 30%; height: 2.9rem; }
   #stream-viewport { height: 5rem; }
