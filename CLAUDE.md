@@ -386,6 +386,14 @@ corrupted on any run with a past-boundary tap (`keys[:0]` aliasing the slice tha
 gets written), and a failed submit destroyed its own retry. See the spec for what
 was deliberately left unfixed and why.
 
+**What is actually left before submitting** (2026-07-27): (a) the README's own
+prose — it is at the repo root and the owner is writing it, plus the
+development-trajectory section (spec §9 TODO); (b) **redeploy** — main runs ahead
+of production, so the stream-typing keyboard map and the README move are not live;
+(c) settle the final defaults (they *are* shipped and taken from the best runs,
+but the evidence is n≈4 per cell). The repo is already public and the arm
+affordance is built.
+
 Not built: the analysis notebook (7) — **and it must use `effectiveEnv`**; the
 §6.1 pilot machinery — invite tokens, `/join`, `/pilot` guided sessions,
 `lab/pull.sh` (deliberately deferred in favour of the open sandbox; pulls are

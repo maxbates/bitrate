@@ -679,11 +679,13 @@ So `RECOMMENDED_CELL` is `{phone: 12, tablet: 20}` (`environments/pixel-lens/gam
 
 **Remaining step-10 work.** The ship ZIP still embeds all eleven environments, including `word-typing`, which is quarantined for violating rule 1 — a grader who types `/env/word-typing/` finds an off-brief game in our submission, and the same URL is reachable on the public site. That is the highest-priority strip. The settings gear deliberately stays (§8).
 
-### TODO — make "arm" unmissable (owner request 2026-07-26, NOT built)
+### Make "arm" unmissable — BUILT 2026-07-26
 
 **The failure mode this guards against is losing a grader's entire score.** Practice is self-paced, unlimited, and — because the practice HUD shows a trailing-60 s bit rate (§4.3) — it *looks* like the game. A grader can spend their whole familiarization period in practice, watch a plausible bps number climb, and never produce a scored run at all. Worse, they may believe they already have. Everything else in step 10 is polish; this one can zero a panelist.
 
 The affordance today is thin: `renderPracticeHelp()` emits a dim `.act.click` reading `[Enter] arm scored run`, and on narrow viewports `#mode-help .act kbd` is hidden — so on the touch device drum pad is actually played on, there is no keyboard hint and the button is the *only* path to a scored run, styled identically to `[Esc] new practice seed` next to it. Note the asymmetry to fix: `.mode-armed` already fills the banner accent-yellow *once you are armed*; nothing draws the eye to the control that gets you there.
+
+**Built as designed.** Two escalating tiers, both colour-only: accent outline plus a slow pulse whenever practice is live, then after 60 s of *accumulated practice* (gated on `run.started`, so idling never accrues) a one-shot suggestion card and a filled button. The card's backdrop is pointer-opaque from the moment it mounts while its buttons enable 400 ms later, so a finger already travelling toward a tile can neither dismiss a card it never saw nor fall through to the grid. Honours `prefers-reduced-motion`. Never appears outside `practice` state. `pixelDebug.showArmPrompt()` triggers it without playing for a real minute. Every constraint below was respected; they are kept as the record of *why* the implementation looks the way it does.
 
 Owner's proposed design:
 
@@ -724,9 +726,9 @@ Known and **not** fixed, with reasons — none can kill the process:
 
 Verified safe by call path rather than assumed: the only two goroutines in the tree (`store.writer`, `openBrowser`), all three mutexes (no upgrades, no I/O or channel sends under lock, `PutVariant`'s early return correctly balanced), every type assertion (all two-value form), `sequence.go`'s modulo (alphabet size ≥ 2 is enforced upstream), and `scoring.go`/`metrics.go`'s index arithmetic.
 
-### TODO — make the repo public (owner decision 2026-07-26, NOT done)
+### Make the repo public — DONE 2026-07-26
 
-The submission links to <https://github.com/maxbates/bitrate>, which is private, so **the gallery footer link 404s until this is flipped**. It is deliberately a separate, deliberate act rather than something done in passing, because going public is irreversible in the ways that matter: git history is permanent, and forks and caches outlive any later deletion.
+**The repo is public** (verified: `gh repo view` reports `visibility=PUBLIC`, and an unauthenticated API fetch confirms it), so the gallery footer link resolves for the graders. It is deliberately a separate, deliberate act rather than something done in passing, because going public is irreversible in the ways that matter: git history is permanent, and forks and caches outlive any later deletion.
 
 Known and accepted before flipping: **`swe-homework.pdf` is tracked and stays tracked** (owner decision, same day) — the brief is published along with the repo, and it is also served at `/assignment.pdf` on the public site. That is a conscious choice, not an oversight; it makes the harness checkable against the brief it was built from.
 
