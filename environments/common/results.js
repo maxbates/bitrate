@@ -305,3 +305,60 @@ function trackHeaderHeight(onChange) {
    It now lives in the gallery footer (environments/index.html), below the links:
    still one click from anywhere via "← gallery", no longer standing between a
    player and the game. Nothing self-injects. */
+
+
+/* ---- offline fallback: draw the sequence locally (spec §8.1) --------------
+
+   The static backup site has no /api/run/start, and that endpoint supplies the
+   one thing the client genuinely cannot do without: the target sequence.
+   Everything else a scored run needs is already client-side — the live HUD, and
+   scoreWith()/renderResults({clientOnly:true}) for the final bps, N, Sc and Si
+   the brief asks for. So the fallback is exactly this: generate the draws here.
+
+   Rule 1 is satisfied either way. The server's seeded generator exists for
+   *replayability* (a stored seed replays a run), not for compliance, and an
+   offline run has nothing to replay into.
+
+   Uniformity is the part that needs care. crypto.getRandomValues gives uniform
+   bytes, but `x % m` is only uniform when m divides the range — otherwise the
+   low symbols come up slightly more often, which is a real exploitable
+   structure in a sequence the brief requires to be uniform. So reject any draw
+   at or above the largest exact multiple of m, exactly as the server rejects
+   hash bytes at or above `256 - 256%m`. */
+const BitrateOffline = (() => {
+  // 32-bit draws: alphabet_size runs to 2^22 (a fine-celled grid), far past
+  // what a single byte could address without bias.
+  function ints(m, len) {
+    if (!(m >= 2) || !(len >= 1)) return [];
+    const limit = Math.floor(0x100000000 / m) * m;
+    const out = new Array(len);
+    const buf = new Uint32Array(256);
+    let bi = buf.length;
+    const draw = () => {
+      if (bi >= buf.length) { crypto.getRandomValues(buf); bi = 0; }
+      return buf[bi++];
+    };
+    for (let k = 0; k < len; k++) {
+      let x;
+      do { x = draw(); } while (x >= limit); // re-draw, never fold
+      out[k] = x % m;
+    }
+    return out;
+  }
+
+  function chars(alphabet, len) {
+    return ints(alphabet.length, len).map((i) => alphabet[i]).join('');
+  }
+
+  // A run id in the server's shape, so a queued submit and any local record
+  // look the same as an online one.
+  function runId() {
+    const b = new Uint8Array(16);
+    crypto.getRandomValues(b);
+    return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  }
+
+  return { ints, chars, runId };
+})();
+window.BitrateOffline = BitrateOffline;
+
