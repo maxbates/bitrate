@@ -230,6 +230,20 @@ body.armed .note.cur { border-color: var(--accent); background: #2a2416; }
   background: var(--accent);
   z-index: 2;
 }
+#lv-tune {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--dim);
+}
+#lv-tune label { letter-spacing: .05em; }
+#lv-slider { width: 320px; accent-color: var(--accent); }
+#lv-fires { min-width: 15rem; text-align: left; }
+#lv-fires b { color: var(--fg); font-weight: normal; }
+#lv-fires .ok { color: var(--live); }
+#lv-fires .warn { color: var(--err); }
+
 #lv-readout { color: var(--dim); font-size: 13px; line-height: 1.8; min-height: 44px; }
 #lv-readout b { color: var(--fg); font-weight: normal; }
 #lv-readout .ok { color: var(--live); }

@@ -414,6 +414,63 @@ moving N — same trade as `#device-warn`, minimised by being wide and shallow.
 `left/right: 0; margin-inline: auto; width: fit-content` (`#device-warn` still
 has this bug). Hooks: `pixelDebug.accHintText/accHintSpent/tickAccuracyHint`.
 
+**Voice babble's mic calibration is OFF** — `MIC_CALIBRATION = false` in
+`voice-babble/game.js` (owner's call, 2026-07-27). One flag disables the level
+check, the `auto` trigger mode, and the band-limited energy path; voice babble
+behaves exactly as it did before that work (preset `high` 0.0012, unfiltered
+analyser, `TEMPLATE_VERSION` 3 so existing templates still load), and the `auto`
+button and re-check control are removed from the sheet. Kept, not deleted: the
+diagnosis was right each time and the remedy never survived real hardware —
+deaf on AirPods, then *8 of 5 words* on the built-in mic, ending at room −48 dB
+/ voice −40 dB where no threshold can sit above the room's peaks and below the
+voice. **A first-session grader must not be asked to tune a threshold before
+they can play**, which is why even the manual slider didn't save it.
+`lab/voice_level_check.py` asserts the reverted behaviour while the flag is off
+and the full suite when it is on — flip it and both still pass. Template
+calibration (saying each sound) is untouched and still required.
+
+**Fixed 2026-07-27 — two bugs where the code contradicted its own on-screen
+copy.** Both were invisible to every existing test because neither the rule nor
+the prose was wrong on its own — only the two disagreed. **Where a rule is
+stated to the player in prose, treat the prose as a testable assertion.**
+
+- **drum pad with a mouse.** `#device-warn` promises "practise with the mouse if
+  you like, but a scored run has to be tapped"; the pointerdown handler's
+  non-touch branch `return`ed unconditionally, so practice clicks were warned
+  about and *dropped* — and since `run.started`/`t0` are set above that branch,
+  the first click started the practice clock and registered nothing. Practice
+  now plays; scored runs still abort on a mouse, arming still needs a prior tap,
+  the warning fires once per bout, and `run.flags.mouse_practice` marks the run.
+  `lab/drum_pad_mouse_test.py`.
+- **voice babble's mic trigger could sit ABOVE the player's voice.** At 5 dB of
+  headroom the noisy fallback `ambient·2.5` is 1.4× the measured voice — nothing
+  can ever register. Same fixed-multiple mistake in the reach test (`ambient·2`)
+  and in the live `noiseFloor·1.8` term. **A threshold above a level the measured
+  voice actually reached is not strict, it is deaf** — all three are now capped
+  by `speech·0.55`.
+- **...and the 5 dB reading itself: the VAD measured energy the recognizer never
+  looks at.** Full-band time-domain RMS counted DC, sub-100 Hz rumble and hiss;
+  the voice adds energy only in 100–4000 Hz; uncorrelated signals sum in
+  quadrature, so a −34 dB rumble floor under a −30 dB voice reads as 5.1 dB of
+  headroom **on any microphone in a silent room**. Now band-limited at the
+  source: `src → highpass(100) ×2 → lowpass(6000) → analyser`. Forces one
+  recalibration (`timing` 3→4, level `v` 1→2).
+  **Method note worth more than the fix:** the first diagnosis was AGC on the
+  Bluetooth chain, and it was wrong. What falsified it was the owner reporting
+  the same 5 dB on the *built-in* mic. **When a symptom survives a change of
+  device, the device is not the variable.** The AGC handling was kept — it is
+  right about a different case — but it was not this bug.
+- **...and then the player got the dial.** Band-limiting fixed the rumble but
+  the owner's real room was still only 8 dB of headroom, and the check flipped
+  from deaf to over-triggering ("heard 8 of 5 words"). A threshold must sit
+  above the room's *peaks* and below the voice; peaks run 6–10 dB over the room
+  median, so at 8 dB the target window is **zero dB wide** and no automatic
+  placement is correct. The result panel now always offers a **manual trigger
+  slider with a live count of what it fires on** — say five words, drag until it
+  reads 5. **When a measurement must survive hardware you cannot enumerate, ship
+  the measurement AND the override, not a cleverer estimator.** Three guesses at
+  the estimator each failed on real hardware; the dial cannot.
+
 **Built 2026-07-26 — liveness hardening** (spec §8, tests in
 `server/liveness_test.go`). The site is now the deliverable, so a failed request
 is fine and a dead process is not. Fixed one critical (unbounded pace-bin

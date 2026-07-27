@@ -6,21 +6,29 @@ copy branches, the two hypothetical bit rates against an independent reference,
 all four dismissal paths, that the figures are static once shown, that the
 banner never eats a tap or moves N, and that pixel lens never shows it.
 
-Tier B: Playwright lives here and never ships (spec §4.1). Not wired into CI or
-the pre-push hook — CI has no browser — so it is run by hand against a dev
-server:
+Tier B: Playwright lives here and never ships (spec §4.1). Wired into the gate
+workflow, which does install Chromium; with no argument it builds and launches
+its own server, exactly like the other suites here.
 
-    ./run.sh &                      # or: go run ./server -dev -addr 127.0.0.1:4712
     pip install -r requirements.txt && playwright install chromium
-    python acc_hint_test.py http://127.0.0.1:4712
+    python acc_hint_test.py                       # launches its own server
+    python acc_hint_test.py http://127.0.0.1:4712 # or drive one already running
 
 It drives the real UI through the pixelDebug hooks; it answers "is it correct",
 never "is it better" (spec §7 — nothing here may rank variants).
 """
-import json, sys
+import atexit
+import json, re, sys
 from playwright.sync_api import sync_playwright
 
-URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:4712"
+from synthetic_player import launch_server
+
+if len(sys.argv) > 1:
+    URL = sys.argv[1]
+else:
+    _proc, URL = launch_server()
+    atexit.register(_proc.kill)
+URL = URL.rstrip("/")
 fails = []
 
 def check(name, ok, detail=""):
@@ -98,8 +106,18 @@ with sync_playwright() as pw:
     n_sel = st["sc"] + st["si"]
     exp95 = st["bits"] * n_sel * 0.9 / secs
     exp100 = st["bits"] * n_sel / secs
-    check("95%% figure matches bits*n*0.9/t (%.1f)" % exp95, ("%.1f" % exp95) in txt, txt)
-    check("100%% figure matches bits*n/t (%.1f)" % exp100, ("%.1f" % exp100) in txt, txt)
+    # Compare numerically, not by matching the rendered 1-dp string. The banner
+    # is generated at tickAccuracyHint() time while the reference is recomputed
+    # from a trailingBps() sampled moments later, so the two disagree in the
+    # last digit whenever the machine is loaded — which made this fail roughly
+    # one run in three under parallel suites while nothing was actually wrong.
+    # Bounded decimal, so the sentence's full stop isn't swallowed into "40.6."
+    quoted = [float(v) for v in re.findall(r"would be (\d+(?:\.\d+)?)", txt)]
+    TOL = 0.25
+    check("95%% figure matches bits*n*0.9/t (%.1f)" % exp95,
+          len(quoted) == 2 and abs(quoted[0] - exp95) <= TOL, txt)
+    check("100%% figure matches bits*n/t (%.1f)" % exp100,
+          len(quoted) == 2 and abs(quoted[1] - exp100) <= TOL, txt)
     check("hypotheticals beat the live trailing bps", exp95 > st["bps"] and exp100 > exp95,
           "live %.1f" % st["bps"])
 

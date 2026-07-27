@@ -61,7 +61,10 @@ function loadSettings() {
   const d = localStorage.getItem(DISPLAY_KEY);
   if (d === 'chips' || d === 'lanes') display = d;
   const v = localStorage.getItem(SENS_KEY);
-  if (v && (v === 'auto' || SENS[v])) sensName = v;
+  // `auto` is only a valid stored value while calibration is on; otherwise a
+  // profile that tried it once would keep landing on a mode that no longer
+  // measures anything.
+  if (v && ((v === 'auto' && MIC_CALIBRATION) || SENS[v])) sensName = v;
 }
 
 function effectiveDisplay() {
@@ -96,7 +99,7 @@ function buildConfig() {
 function loadTemplates() {
   try {
     const all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}');
-    if (all.timing !== 3) return null; // recalibrate after VAD/timing changes
+    if (all.timing !== TEMPLATE_VERSION) return null; // recalibrate after VAD/timing changes
     const map = (all.sets && all.sets[setName]) || null;
     if (!map) return null;
     // Stale templates from an older feature-vector shape force recalibration.
@@ -111,7 +114,7 @@ function saveTemplates(map) {
   let all;
   try { all = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || '{}'); } catch { all = {}; }
   all.version = 1;
-  all.timing = 3;
+  all.timing = TEMPLATE_VERSION;
   all.sets = all.sets || {};
   all.sets[setName] = map;
   try { localStorage.setItem(TEMPLATES_KEY, JSON.stringify(all)); } catch { /* fine */ }
@@ -158,8 +161,40 @@ const BANDS = 18;
 const FMIN = 100, FMAX = 4000;
 const ZCR_WEIGHT = 6;
 
+// ---- mic calibration: OFF (2026-07-27, owner's call) ----
+//
+// This one flag disables everything the mic-calibration work added: the level
+// check that ran before template calibration, the `auto` trigger mode, and the
+// band-limited energy path. With it false, voice babble behaves exactly as it
+// did before that work — preset trigger, unfiltered analyser, templates at
+// version 3 — so anyone's existing calibration keeps working.
+//
+// Why it is off rather than deleted: the diagnosis was right and the remedy
+// was not. The measurement kept being defeated by real hardware — three
+// successive estimators each failed on the owner's machine, ending at room
+// -48 dB / voice -40 dB, where a threshold must sit above the room's peaks and
+// below the voice and there is simply no such value. The dormant code (level
+// check, AGC handling, band-limiting, manual slider) is all still here and all
+// still tested; what it lacks is a design that survives a mic we haven't seen.
+// Turning this on again is a one-line change plus a plan for that.
+const MIC_CALIBRATION = false;
+
+// The energy path is band-limited to the recognizer's own band before the VAD
+// sees it — see micInit. FMIN/FMAX below are the feature bands; these are the
+// filter corners, set just outside them so nothing the classifier uses is lost.
+const HP_HZ = 100;
+const LP_HZ = 6000;
+
+// Templates are tied to the signal chain that recorded them, so the stored
+// version tracks it: 3 = unfiltered (what everyone already has), 4 = the
+// band-limited chain. Follows MIC_CALIBRATION so switching the flag never
+// silently classifies against templates from the other chain.
+const TEMPLATE_VERSION = MIC_CALIBRATION ? 4 : 3;
+
 let audioCtx = null;
 let analyser = null;
+let rawAnalyser = null; // unfiltered, diagnostics only
+let rawTimeBuf = null;
 let micOK = false;
 let micStarting = false;
 let bandBins = null; // [ [startBin, endBin), ... ]
@@ -179,10 +214,46 @@ async function micInit() {
     // iOS creates the context suspended even inside a gesture until resumed.
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     const src = audioCtx.createMediaStreamSource(stream);
+
+    // Band-limit to the speech band BEFORE anything is measured.
+    //
+    // The VAD's energy was a full-band time-domain RMS, so "the room" counted
+    // DC offset, sub-100 Hz rumble (fans, HVAC, desk vibration, mains hum) and
+    // HF hiss — none of which the classifier's 100–4000 Hz bands even look at.
+    // A voice only adds energy inside that band, and the two sum in
+    // quadrature, so a −34 dB rumble floor under a −30 dB voice measures as
+    // −29 dB during speech: 5 dB of apparent headroom for a perfectly clear
+    // speaker, on any microphone, in a silent room. Band-limited first, the
+    // same room and voice give ~23 dB. This was reported on AirPods AND the
+    // built-in mic, which is exactly the tell that it was never the device.
+    //
+    // Two cascaded highpasses (24 dB/oct) put real attenuation on mains hum
+    // rather than the 8 dB a single pole would manage. The corner matches the
+    // feature bands' own floor, so nothing the recognizer uses is discarded.
+    const mk = (type, hz) => {
+      const f = audioCtx.createBiquadFilter();
+      f.type = type;
+      f.frequency.value = hz;
+      f.Q.value = Math.SQRT1_2; // Butterworth: flat in band, no resonant peak
+      return f;
+    };
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
     analyser.smoothingTimeConstant = 0;
-    src.connect(analyser);
+
+    if (MIC_CALIBRATION) {
+      const hp1 = mk('highpass', HP_HZ), hp2 = mk('highpass', HP_HZ);
+      src.connect(hp1).connect(hp2).connect(mk('lowpass', LP_HZ)).connect(analyser);
+      // An unfiltered tap, read only to report how much of the room was rumble.
+      rawAnalyser = audioCtx.createAnalyser();
+      rawAnalyser.fftSize = 2048;
+      rawAnalyser.smoothingTimeConstant = 0;
+      src.connect(rawAnalyser);
+      rawTimeBuf = new Float32Array(rawAnalyser.fftSize);
+    } else {
+      src.connect(analyser); // the original chain, unfiltered
+    }
+
     freqBuf = new Float32Array(analyser.frequencyBinCount);
     timeBuf = new Float32Array(analyser.fftSize);
     const hzPerBin = audioCtx.sampleRate / analyser.fftSize;
@@ -212,6 +283,14 @@ function readFrame() {
   }
   const rms = Math.sqrt(sum / timeBuf.length);
   const zcr = zc / timeBuf.length;
+  // Unfiltered level, for the "how much of that was rumble" readout only —
+  // never for the VAD, which must see the band-limited signal.
+  let rawSum = 0;
+  if (rawAnalyser) {
+    rawAnalyser.getFloatTimeDomainData(rawTimeBuf);
+    for (let i = 0; i < rawTimeBuf.length; i++) rawSum += rawTimeBuf[i] * rawTimeBuf[i];
+  }
+  const rmsRaw = Math.sqrt(rawSum / (rawTimeBuf ? rawTimeBuf.length : 1));
   const bands = new Array(BANDS);
   for (let b = 0; b < BANDS; b++) {
     const [s, e] = bandBins[b];
@@ -219,7 +298,7 @@ function readFrame() {
     for (let i = s; i < e; i++) acc += freqBuf[i]; // dB domain
     bands[b] = acc / (e - s);
   }
-  return { rms, zcr, bands, t: performance.now() };
+  return { rms, rmsRaw, zcr, bands, t: performance.now() };
 }
 
 // Two-stage feature vector: onset frames + steady frames, concatenated.
@@ -289,7 +368,7 @@ const SENS = { high: 0.0012, med: 0.003, low: 0.007 };
 // measurement — see the level check below — and keeps the presets as the
 // manual override. A per-player measured number, so it lives in localStorage
 // and NOT in the config hash; only the mode name is config (spec §5).
-let sensName = 'auto';
+let sensName = MIC_CALIBRATION ? 'auto' : 'high';
 let measured = null; // {ambient, speech, thr, snrDb, syllables, at} or null
 
 // The absolute floor in force right now. Auto with nothing measured yet (the
@@ -308,7 +387,19 @@ function absFloor() {
 // are still dropped downstream by MIN_FRAMES, so this doesn't leak steady
 // noise in.
 const TRIGGER_MULT = 1.8;
-function onsetThreshold() { return Math.max(seg.noiseFloor * TRIGGER_MULT, absFloor()); }
+function onsetThreshold() {
+  const t = Math.max(seg.noiseFloor * TRIGGER_MULT, absFloor());
+  // Same rule as the measured floor, applied to the *live* threshold: never
+  // above a level the player's voice was measured actually reaching. In a loud
+  // or AGC-flattened room the adaptive term climbs past their own volume — the
+  // floor tracks the din, the din is close to the voice, and the game goes
+  // deaf with the meter looking healthy. The measurement is the one thing that
+  // gives us a real upper bound, so use it.
+  const ceiling = sensName === 'auto' && measured && measured.speech > 0
+    ? measured.speech * NOISY_MAX_FRAC
+    : Infinity;
+  return Math.min(t, ceiling);
+}
 
 // The noise floor gates itself: every non-triggering frame used to be folded
 // into it at one rate, so a sound that ramped in under the trigger dragged the
@@ -481,7 +572,10 @@ function updateLevel(rms) {
 // noise-opened segments and are worse than useless.
 
 const LV = {
-  SETTLE_MS: 500,     // let the room (and the player) settle before measuring
+  // A Bluetooth headset switches profile when the stream opens and needs a
+  // second or so before its levels mean anything; 500 ms measured the settling
+  // transient as if it were the room.
+  SETTLE_MS: 1200,
   AMBIENT_MS: 1200,
   SPEAK_MAX_MS: 5000,
   PHRASE: ['one', 'two', 'three', 'four', 'five'],
@@ -497,6 +591,16 @@ const LV = {
 // voiced peak, where an unstressed syllable and an onset ramp live.
 const AMB_MULT = 2.5;
 const SPEECH_FRAC = 0.28;
+// Hard ceiling on the trigger, as a fraction of the voiced peak we just
+// measured. A threshold ABOVE a level the player's voice actually reached is
+// not "strict", it is dead: nothing they do can ever register. The noisy
+// fallback below could produce exactly that — at 5 dB of headroom
+// `ambient·2.5` works out to 1.4× the voice — which is how an AirPods user
+// ended up with a mic check that never heard them.
+const NOISY_MAX_FRAC = 0.55;
+// If the dedicated silent window reads this much hotter than the gaps inside
+// the phrase, the capture chain is running its own gain control (see below).
+const PROCESSED_DB = 5;
 // A stale threshold from a different room is worse than none, and re-measuring
 // costs four seconds — so it expires rather than following the player around.
 const LEVEL_MAX_AGE_MS = 6 * 3600 * 1000;
@@ -506,7 +610,7 @@ let lvl = null; // {phase, t0, ambient: [], speech: [], next, ...}
 function loadLevel() {
   try {
     const m = JSON.parse(localStorage.getItem(LEVEL_KEY) || 'null');
-    if (!m || m.v !== 1 || !(m.thr > 0)) return null;
+    if (!m || m.v !== 2 || !(m.thr > 0)) return null; // v2: band-limited energy
     // Date.now() only stamps the measurement's age — all run timing is still
     // performance.now(); a wall clock never touches the scoring path.
     if (!(Date.now() - m.at < LEVEL_MAX_AGE_MS)) return null;
@@ -515,7 +619,7 @@ function loadLevel() {
 }
 
 function saveLevel(m) {
-  try { localStorage.setItem(LEVEL_KEY, JSON.stringify(Object.assign({ v: 1, at: Date.now() }, m))); }
+  try { localStorage.setItem(LEVEL_KEY, JSON.stringify(Object.assign({ v: 2, at: Date.now() }, m))); }
   catch { /* fine */ }
 }
 
@@ -523,10 +627,14 @@ const dbfs = (r) => 20 * Math.log10(Math.max(r, 1e-7));
 const DB_FLOOR = -66;
 const dbPct = (r) => Math.max(0, Math.min(100, ((dbfs(r) - DB_FLOOR) / -DB_FLOOR) * 100));
 
-function median(xs) {
+function pctl(xs, p) {
   if (!xs.length) return 0;
   const s = xs.slice().sort((a, b) => a - b);
-  return s[Math.floor(s.length / 2)];
+  return s[Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))))];
+}
+
+function median(xs) {
+  return pctl(xs, 0.5);
 }
 
 // The typical voiced peak, not the single loudest sample: median of the top
@@ -541,6 +649,7 @@ function startLevelCheck(next) {
   lvl = {
     phase: 'settle', t0: 0, ambient: [], speech: [],
     ambRef: 0, voiced: 0, lastVoicedT: 0, result: null,
+    manualThr: null, fires: 0, firing: false, fireQuiet: 0,
     next: next || afterLevel,
   };
   setState('level');
@@ -595,17 +704,55 @@ function levelFrame(f) {
     // sit through the full window.
     const done = lvl.voiced >= LV.MIN_VOICED && f.t - lvl.lastVoicedT > LV.END_QUIET_MS;
     if (done || f.t - lvl.t0 >= LV.SPEAK_MAX_MS) finishLevelCheck();
+    return;
   }
+  if (lvl.phase === 'result') liveFireCheck(f);
+}
+
+// While the result is up, keep counting what the current trigger would fire
+// on. This is the whole point of the manual control: the player talks, watches
+// the number, and stops when it matches the words they said. No amount of
+// arithmetic on my part beats one person saying "five" and seeing 5.
+function liveFireCheck(f) {
+  const thr = activeThr();
+  if (f.rms > thr) {
+    if (!lvl.firing) { lvl.firing = true; lvl.fires++; renderFires(); }
+    lvl.fireQuiet = 0;
+  } else if (lvl.firing) {
+    if (++lvl.fireQuiet >= END_QUIET_FRAMES) lvl.firing = false;
+  }
+}
+
+// The trigger currently in force on the panel: the player's if they've touched
+// the slider, otherwise the measured one.
+function activeThr() {
+  if (!lvl) return 0;
+  return lvl.manualThr != null ? lvl.manualThr : (lvl.result ? lvl.result.thr : 0);
+}
+
+function renderFires() {
+  const el = $('lv-fires');
+  if (!el || !lvl) return;
+  const n = lvl.fires;
+  const cls = n === LV.PHRASE.length ? 'ok' : n === 0 ? '' : 'warn';
+  el.innerHTML = 'fired <b class="' + cls + '">' + n + '</b>× · '
+    + (n === 0 ? 'say the words — nothing is registering yet'
+      : n > LV.PHRASE.length ? 'picking up your room — drag right'
+        : n < LV.PHRASE.length ? 'missing words — drag left'
+          : 'that\'s five. good.');
 }
 
 // Push the buffered frames back through the live segmenter with a candidate
 // threshold and count what it would have opened. `seg` is saved and restored
 // so the real state machine is untouched.
-function replaySyllables(frames, thr, ambient) {
+function replaySyllables(frames, thr, ambient, speech) {
   const savedSeg = Object.assign({}, seg);
   const savedMeasured = measured, savedSens = sensName;
   sensName = 'auto';
-  measured = { thr };
+  // `speech` too, so the replay sees the same voice-derived ceiling in
+  // onsetThreshold() that the live run will — otherwise the syllable count is
+  // measuring a threshold the game won't actually use.
+  measured = { thr, speech };
   Object.assign(seg, {
     active: false, frames: [], onsetT: 0, quietFrames: 0, refractory: 0,
     classified: false, noiseFloor: Math.min(NOISE_MAX, ambient), peak: 0,
@@ -628,31 +775,80 @@ function replaySyllables(frames, thr, ambient) {
 function deriveThreshold(ambient, speech) {
   const lo = ambient * AMB_MULT;    // must clear the room
   const hi = speech * SPEECH_FRAC;  // must sit under the quietest syllable
-  // When the band inverts the room is too loud relative to the voice. Fall
-  // back to the room floor: erring toward a missed syllable rather than an
-  // invented selection is the correct direction under double-penalized errors.
+  // When the band inverts, the room is too loud relative to the voice. Erring
+  // toward a missed syllable rather than an invented selection is the right
+  // direction under double-penalized errors — but only up to a point, and the
+  // first cut of this had no such point. `lo` alone can land above the voiced
+  // peak (at 5 dB headroom it is 1.4× it), and a trigger the voice cannot
+  // reach doesn't make the game strict, it makes it deaf. Cap it so a
+  // full-volume syllable always clears: some false triggers in a loud room are
+  // recoverable — the player hears them and moves — while total silence is not.
   const noisy = !(hi > lo);
-  const thr = noisy ? lo : Math.min(Math.max(Math.sqrt(ambient * speech), lo), hi);
+  const thr = noisy
+    ? Math.min(lo, speech * NOISY_MAX_FRAC)
+    : Math.min(Math.max(Math.sqrt(ambient * speech), lo), hi);
   return { thr, noisy, snrDb: dbfs(speech) - dbfs(ambient) };
 }
 
 // Pure over its frame buffers (replaySyllables saves and restores `seg`), so
 // the synthetic harness can exercise the whole measurement without a mic.
 function computeLevel(ambientFrames, speechFrames) {
-  const ambient = Math.max(median(ambientFrames.map((f) => f.rms)), 1e-6);
-  const speech = voicedLevel(speechFrames.map((f) => f.rms));
+  const speechRms = speechFrames.map((f) => f.rms);
+  const speech = voicedLevel(speechRms);
+
+  // The room, measured two ways, because they fail in opposite directions.
+  //
+  //   quiet window — a dedicated 1.2 s of silence. Honest on a plain mic.
+  //   phrase gaps  — a low percentile of the *speech* window, which lands in
+  //     the four pauses of "one two three four five".
+  //
+  // The gaps exist because of AirPods. A Bluetooth headset runs over HFP with
+  // the OS's own gain control, and `autoGainControl: false` cannot reach it
+  // from a web page — the constraint is honoured by the browser, not by the
+  // Bluetooth stack. AGC's whole job is to make quiet things loud: through a
+  // silent window it winds the gain *up*, so the "room" reads hot, then pulls
+  // it down over speech. The two windows are then measured at different gains
+  // and the ratio between them is meaningless — squashed toward 1, which is
+  // how a user talking loudly into AirPods got 5 dB of headroom and a trigger
+  // above their own voice. Reading the room from inside the same window as the
+  // voice puts both under the same gain, so the ratio is real again.
+  //
+  // Take the lower of the two: a room reading that is too low is corrected by
+  // the upper clamp and by the live `noiseFloor · TRIGGER_MULT` term, while one
+  // that is too high sets the trigger out of the player's reach and the game
+  // simply stops responding.
+  // How much of the room the band-limiting removed. Purely a readout: it is
+  // the difference between what a full-band RMS would have called "the room"
+  // and what actually competes with speech.
+  const rawQuiet = Math.max(median(ambientFrames.map((f) => f.rmsRaw || f.rms)), 1e-6);
+  const quiet = Math.max(median(ambientFrames.map((f) => f.rms)), 1e-6);
+  const rumbleDb = dbfs(rawQuiet) - dbfs(quiet);
+  const gaps = Math.max(pctl(speechRms, 0.15), 1e-6);
+  const ambient = Math.max(Math.min(quiet, gaps), 1e-6);
+  // A silent window much hotter than the pauses in continuous speech is the
+  // AGC signature. Worth naming, because "move somewhere quieter" is actively
+  // wrong advice for someone sitting in a silent room wearing earbuds.
+  const processed = dbfs(quiet) - dbfs(gaps) > PROCESSED_DB;
+
+  const d = deriveThreshold(ambient, speech);
+
   // "Did anything reach the mic" is a *separate*, gentler question from "has
   // the phrase finished" (LV.MIN_VOICED, 3x, used only to end the window
   // early). Sharing one gate made a merely noisy room — where the voice sits
   // only ~10 dB over the din, so few frames clear 3x — report itself as a dead
   // microphone, which is the wrong advice entirely.
-  const heard = speechFrames.filter((f) => f.rms > ambient * 2).length;
+  //
+  // Ask it against the threshold we just derived rather than a fixed multiple
+  // of the room: those are the same question ("will this player's voice
+  // register?"), and any fixed multiple repeats the original mistake — at 5 dB
+  // of headroom even `ambient · 2` sits above the voice, so a perfectly
+  // audible speaker was written off as a dead mic.
+  const heard = speechFrames.filter((f) => f.rms > d.thr).length;
   const heardNothing = heard < LV.MIN_HEARD || speech <= ambient * 1.5;
-  const d = deriveThreshold(ambient, speech);
-  const syllables = heardNothing ? 0 : replaySyllables(speechFrames, d.thr, ambient);
+  const syllables = heardNothing ? 0 : replaySyllables(speechFrames, d.thr, ambient, speech);
   return {
     ambient, speech, thr: d.thr, snrDb: d.snrDb, syllables,
-    noisy: d.noisy, heardNothing,
+    noisy: d.noisy, heardNothing, processed, quiet, gaps, rawQuiet, rumbleDb,
     clean: !heardNothing && !d.noisy && syllables === LV.PHRASE.length,
   };
 }
@@ -670,7 +866,10 @@ function acceptLevel() {
   const r = lvl.result;
   const next = lvl.next;
   if (!r.heardNothing) {
-    measured = { ambient: r.ambient, speech: r.speech, thr: r.thr, snrDb: r.snrDb, syllables: r.syllables };
+    // The player's trigger wins over the measured one — they had the live
+    // count in front of them, which is better evidence than one phrase.
+    measured = { ambient: r.ambient, speech: r.speech, thr: activeThr(),
+                 snrDb: r.snrDb, syllables: r.syllables, manual: lvl.manualThr != null };
     saveLevel(measured);
     measured = loadLevel() || measured;
     // The tracker starts at the room we just measured instead of walking to it
@@ -692,6 +891,7 @@ function renderLevelPanel() {
   meter.classList.remove('has-trigger');
   readout.innerHTML = '';
   foot.innerHTML = '';
+  $('lv-tune').hidden = true;
   if (!lvl) return;
 
   // A tappable skip, not just Esc: the device most likely to have a mic
@@ -716,7 +916,18 @@ function renderLevelPanel() {
   const r = lvl.result;
   step.textContent = 'result';
   meter.classList.add('has-trigger');
-  document.documentElement.style.setProperty('--lv-trigger', dbPct(r.thr).toFixed(1) + '%');
+  syncTriggerLine();
+
+  // The manual control is offered on every result, not hidden behind a
+  // failure: automatic placement is a guess from one phrase, and the player
+  // watching a live count is better evidence than the guess. It leads when the
+  // measurement couldn't find a workable gap.
+  if (!r.heardNothing) {
+    $('lv-tune').hidden = false;
+    const slider = $('lv-slider');
+    slider.value = String(Math.round(dbfs(activeThr())));
+    renderFires();
+  }
 
   if (r.heardNothing) {
     prompt.innerHTML = '<span class="quiet">didn\'t hear you</span>';
@@ -733,19 +944,67 @@ function renderLevelPanel() {
       'room <b>' + dbfs(r.ambient).toFixed(0) + ' dB</b>' +
       ' · voice <b>' + dbfs(r.speech).toFixed(0) + ' dB</b>' +
       ' · headroom <b>' + r.snrDb.toFixed(0) + ' dB</b><br>' +
-      'trigger set to <b>' + dbfs(r.thr).toFixed(0) + ' dB</b> · ' + counted +
-      (r.noisy
-        ? '<br><span class="warn">too much background noise for your voice level — move somewhere quieter, or speak up. quiet sounds may be missed.</span>'
-        : r.syllables > LV.PHRASE.length
-          ? '<br>extra words usually means background noise — try again somewhere quieter'
-          : r.syllables < LV.PHRASE.length
-            ? '<br>say the words a little louder, with a small gap between each'
-            : '');
+      'trigger set to <b id="lv-thr">' + dbfs(r.thr).toFixed(0) + ' dB</b>' +
+      '<span id="lv-thr-note"></span> · ' + counted +
+      // Only when it actually did something. On a clean mic this is ~0 dB and
+      // saying so would be noise about noise.
+      (r.rumbleDb >= 3
+        ? '<br><span class="ok">' + r.rumbleDb.toFixed(0) + ' dB of low-frequency rumble filtered out</span>' +
+          ' — fans, traffic and desk hum sit below your voice and are ignored'
+        : '') +
+      levelAdvice(r);
   }
   foot.innerHTML =
     (r.heardNothing ? '' : '<button type="button" class="act click" id="lv-accept"><kbd>Enter</kbd>use this</button>') +
     '<button type="button" class="act click" id="lv-again">measure again</button>';
 }
+
+// What to tell the player, and it has to match what actually happened. The
+// first version said "quiet sounds may be missed" on a result that had
+// over-triggered and heard EIGHT of five words — advice pointing the opposite
+// way from the symptom in front of them.
+function levelAdvice(r) {
+  let s = '';
+  if (r.noisy && r.processed) {
+    // Naming the cause matters: this player is usually in a silent room, and
+    // telling them to find a quieter one sends them chasing nothing.
+    s = '<span class="warn">your microphone is doing its own noise processing — common on Bluetooth headsets like AirPods, and it flattens the gap between your voice and the room.</span>'
+      + '<br>set the trigger by hand below, or switch to the built-in microphone and re-check.';
+  } else if (r.noisy) {
+    s = '<span class="warn">your voice is only ' + r.snrDb.toFixed(0) + ' dB above the room — too little for any one trigger to sit above the room <em>and</em> below you.</span>'
+      + '<br>set it by hand below: say the five words and drag until it fires five times.'
+      + ' a laptop fan under the microphone is a common cause, so it is worth checking what the machine is busy with.';
+  } else if (r.syllables > LV.PHRASE.length) {
+    s = 'the trigger is catching your room as well as your voice — drag it right until it fires five times.';
+  } else if (r.syllables < LV.PHRASE.length) {
+    s = 'some words did not register — drag the trigger left, or say them a little louder.';
+  }
+  return s ? '<br>' + s : '';
+}
+
+function syncTriggerLine() {
+  document.documentElement.style.setProperty('--lv-trigger', dbPct(activeThr()).toFixed(1) + '%');
+}
+
+// Dragging resets the count: the number has to describe the trigger you are
+// looking at, not a mixture of every trigger you passed through on the way.
+$('lv-slider').addEventListener('input', (e) => {
+  if (!lvl || !lvl.result) return;
+  lvl.manualThr = Math.pow(10, Number(e.target.value) / 20);
+  lvl.fires = 0;
+  lvl.firing = false;
+  if (lvl.autoTimer) { clearTimeout(lvl.autoTimer); lvl.autoTimer = null; }
+  syncTriggerLine();
+  renderFires();
+  // The readout has to follow the dial, or the panel shows one number while
+  // the player is looking at another.
+  const db = Number(e.target.value).toFixed(0);
+  const thrEl = $('lv-thr'), noteEl = $('lv-thr-note');
+  if (thrEl) thrEl.textContent = db + ' dB';
+  if (noteEl) noteEl.textContent = ' (measured ' + dbfs(lvl.result.thr).toFixed(0) + ')';
+  const acc = $('lv-accept');
+  if (acc) acc.innerHTML = '<kbd>Enter</kbd>use ' + db + ' dB';
+});
 
 $('lv-foot').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -1442,7 +1701,11 @@ $('seg-sens').addEventListener('click', (e) => {
   syncSheet();
   // Switching to auto with nothing measured (or an expired measurement) runs
   // the check rather than silently sitting on the fallback preset.
-  if (sensName === 'auto' && !measured) { closeSheet(); startLevelCheck(toPractice); return; }
+  if (MIC_CALIBRATION && sensName === 'auto' && !measured) {
+    closeSheet();
+    startLevelCheck(toPractice);
+    return;
+  }
   toPractice();
 });
 
@@ -1450,6 +1713,15 @@ $('recheck-level').addEventListener('click', () => {
   closeSheet();
   startLevelCheck(toPractice);
 });
+
+// With calibration off, the controls it added come out of the sheet — an
+// `auto` button that silently means "the middle preset" is worse than not
+// offering it.
+if (!MIC_CALIBRATION) {
+  const autoBtn = $('seg-sens').querySelector('[data-v="auto"]');
+  if (autoBtn) autoBtn.remove();
+  $('recheck-level').remove();
+}
 
 // Live mic readout while the sheet is open — shows whether "didn't
 // register" is a level problem (peak below threshold) at a glance.
@@ -1504,14 +1776,20 @@ window.voiceDebug = {
   // Synthesize an ambient window plus `words` bursts at `speech` RMS and run
   // the real measurement over them: same percentiles, same threshold algebra,
   // same segmenter replay. This is how the level check is regression-tested.
-  measureFake({ ambient = 0.002, speech = 0.05, words = 5, wordMs = 240, gapMs = 140 } = {}) {
+  // `ambientWindow` defaults to `ambient`; set it higher to model a capture
+  // chain whose AGC winds the gain up through the silent window and back down
+  // over speech (Bluetooth headsets), which is what makes the dedicated quiet
+  // window disagree with the pauses inside the phrase.
+  measureFake({ ambient = 0.002, speech = 0.05, words = 5, wordMs = 240, gapMs = 140,
+                ambientWindow = null } = {}) {
     const dt = 1000 / 60;
     let t = 0;
     const mk = (rms) => ({ rms: Math.max(rms, 1e-7), zcr: 0.05, bands: new Array(BANDS).fill(-60), t: (t += dt) });
     const jitter = () => 0.75 + 0.5 * Math.random();
     const amb = () => mk(ambient * jitter());
+    const quietLevel = ambientWindow == null ? ambient : ambientWindow;
     const ambientFrames = [];
-    for (let i = 0; i < Math.round(LV.AMBIENT_MS / dt); i++) ambientFrames.push(amb());
+    for (let i = 0; i < Math.round(LV.AMBIENT_MS / dt); i++) ambientFrames.push(mk(quietLevel * jitter()));
     const speechFrames = [];
     for (let w = 0; w < words; w++) {
       const n = Math.round(wordMs / dt);
@@ -1528,6 +1806,12 @@ window.voiceDebug = {
   deriveThreshold,
   measured: () => measured,
   absFloor,
+  // The energy path's filter corners, so a test can assert the VAD is
+  // band-limited rather than trusting that it still is.
+  band: () => ({ hp: HP_HZ, lp: LP_HZ, filtered: !!(analyser && rawAnalyser) }),
+  activeThr: () => activeThr(),
+  calibrationEnabled: () => MIC_CALIBRATION,
+  templateVersion: () => TEMPLATE_VERSION,
   skipLevel() {
     if (state !== 'level') return 'not in level check';
     skipLevelCheck();
@@ -1550,7 +1834,7 @@ if (measured) seg.noiseFloor = Math.min(NOISE_MAX, measured.ambient);
 function beginSession() {
   // Level check first: templates recorded through a wrong trigger are captured
   // off noise-opened segments, so measuring after calibrating fixes nothing.
-  if (sensName === 'auto' && !measured) {
+  if (MIC_CALIBRATION && sensName === 'auto' && !measured) {
     startLevelCheck(afterLevel);
   } else if (!templates) {
     startCalibration();

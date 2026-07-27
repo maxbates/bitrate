@@ -101,7 +101,11 @@ body.armed #field { cursor: none; }
   width: calc(var(--cell, 12px) - 4px);
   height: calc(var(--cell, 12px) - 4px);
   background: var(--accent);
-  border-radius: 4px;
+  /* Proportional, not a flat 4px: the hit region is the whole square cell, and
+     on pixel lens's 3–10 mm cells a 4px radius on a ~15px box rounded it into
+     something that read as a dot. Drum pad's 12–25 mm tiles are unchanged
+     (they clamp at 4px). */
+  border-radius: min(4px, calc(var(--cell, 12px) / 8));
   opacity: .92;
   box-shadow: 0 0 14px 3px rgba(224, 180, 82, .45);
 }
@@ -263,6 +267,11 @@ body.armed #field { cursor: none; }
   font-size: 13px;
   line-height: 1.5;
   text-align: center;
+  /* It is a standing banner over live cells, so a target that spawns behind it
+     must stay findable. At 0.75 the square shows through well enough to aim at
+     while the text stays readable — the banner is already pointer-transparent,
+     so seeing the cell is the only thing between you and hitting it. */
+  opacity: .75;
 }
 #device-warn b { color: #fff; font-weight: normal; }
 /* Fixed, so it never moves the field or N — but it sits over live cells, and a

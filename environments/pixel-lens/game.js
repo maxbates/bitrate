@@ -24,6 +24,10 @@ let loupeR = 110;            // lens radius (px, settings-driven)
 // magnification so the steps stay invisible.
 function lensRings() { return Math.round(16 + lensMag * 5); }
 const ARROW_DIST = 320;      // beyond this, show the direction affordance
+// Inset of the loupe's true-position pin from the cell edge, in px. Big enough
+// that the pin's outer stroke (1.75 px either side of the path) still falls
+// inside the cell, so every pixel of the mark is a valid click.
+const PIN_INSET = 2;
 // Per-game settings: the two share an implementation, not a cell menu.
 const SETTINGS_KEY_BY_MODE = { mouse: 'bitrate_pixel_settings_v1', touch: 'bitrate_drum_settings_v1' };
 const DEFAULT_CELL_MM = 5;
@@ -663,13 +667,26 @@ fieldEl.addEventListener('pointerdown', (e) => {
   // Drum pad's whole claim is that a finger did this. A mouse click landing in
   // a scored run invalidates it, the same as losing the window — the run can't
   // stand, and silently scoring it would put a cursor run on a touch board.
+  //
+  // Practice is the opposite case and used to be wrong: this branch returned
+  // unconditionally, so a click was warned about and then *dropped*, while
+  // `run.started` had already been set above — the practice clock started and
+  // nothing ever registered against it. Meanwhile `#device-warn` promises, in
+  // so many words, "practise with the mouse if you like, but a scored run has
+  // to be tapped". The copy was right and the code contradicted it.
   if (touchRequired() && !isTouchLike(e.pointerType)) {
-    if (run.scored && run.started) { abortScoredRun('mouse_input'); return; }
-    if (state === 'armed') { toPractice(); }
-    run.mouseSeen = true;
-    showNotice('drum pad is the touch game — that was a <b>' + e.pointerType +
-      '</b>. tap the grid to play; scored runs need a touchscreen.', 'warn', 5000);
-    return;
+    // An armed run became a scored one a few lines above, so this catches the
+    // arm-then-click case too.
+    if (run.scored) { abortScoredRun('mouse_input'); return; }
+    // Once per bout, not once per click: a 5 s toast on every selection would
+    // sit on top of the grid for the whole practice run.
+    if (!run.mouseSeen) {
+      run.mouseSeen = true;
+      run.flags.mouse_practice = true; // so analysis never reads it as a tapped run
+      showNotice('drum pad is the touch game — that was a <b>' + e.pointerType +
+        '</b>. practice works with a click; a scored run has to be tapped.', 'warn', 5000);
+    }
+    // ...and fall through: the click plays.
   }
   if (isTouchLike(e.pointerType)) run.touchSeen = true;
 
@@ -1009,16 +1026,23 @@ function drawLoupe() {
     if (dist < loupeR) {
       const tx = loupeR + dx;
       const ty = loupeR + dy;
+      // The pin is the CELL, at its true size — not a fixed 6 px dot.
+      // What the player needs from this mark is not only where to click but
+      // how much room there is to miss by, and a constant-radius circle
+      // answered neither: it understated a 10 mm cell badly and overstated a
+      // 3 mm one, while implying a round target for a square hit region.
+      //
+      // Inset so the whole mark, outermost stroke included, lies inside the
+      // real cell: then clicking anywhere on it — border included — is a hit,
+      // and the drawing never promises area it doesn't own.
+      const s = Math.max(6, grid.cell - PIN_INSET * 2);
+      const x0 = tx - s / 2, y0 = ty - s / 2;
       lctx.lineWidth = 3.5;
       lctx.strokeStyle = 'rgba(0, 0, 0, .6)';
-      lctx.beginPath();
-      lctx.arc(tx, ty, 6, 0, Math.PI * 2);
-      lctx.stroke();
+      lctx.strokeRect(x0, y0, s, s);
       lctx.lineWidth = 1.75;
       lctx.strokeStyle = '#e0b452';
-      lctx.beginPath();
-      lctx.arc(tx, ty, 6, 0, Math.PI * 2);
-      lctx.stroke();
+      lctx.strokeRect(x0, y0, s, s);
       lctx.lineWidth = 1;
     }
   }
