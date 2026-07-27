@@ -111,6 +111,15 @@ Treat as decided — the rationale is in spec §2 precisely so they don't get
   already-drawn future characters does not violate i.i.d.
 - **Chunking on by default (groups of 4)** — display-only separators, never
   targets.
+- **Keyboard map under the stream, on by default** (`keyboard`, 2026-07-26) —
+  QWERTY diagram with the current key filled yellow and the next outlined
+  green (drum pad's colours, one visual language). The stream says which
+  letter, the map says which finger: a glyph is not a spatial stimulus, and
+  first-session players translate. **A config key, not a local preference** —
+  same axis as lookahead/chunking, since presentation moves the bit rate and
+  on/off must be separate variants. Green is gated on `lookahead >= 1` (never
+  reveal more future than the stream does); keys outside the alphabet render
+  inert; highlight changes colour only, never size (the band/fixation rule).
 - **Timer starts on the first keypress** of an explicitly **armed** run, and
   ends exactly 60.000 s later. All boundary math on `event.timeStamp`.
 - **Stimulus-response compatibility**: the stimulus *is* the response. No
