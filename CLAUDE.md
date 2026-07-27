@@ -153,7 +153,8 @@ environments/   one dir per game + common/ (shared results renderer, CSS)
 lab/            Tier B: synthetic player, ship gate, voice level check
 deploy/aws/     CloudFormation + deploy.sh for the public instance
 README.md       the deliverable README: GitHub landing page AND /readme
-run.sh          the only launcher (needs Go); requirement 5's artifact
+run.sh          requirement 5's artifact: opens the deployed game + README (needs nothing)
+serve.sh        local server from source (needs Go); the offline fallback the gate drives
 dist/           build output (gitignored)
 ```
 
@@ -196,9 +197,13 @@ fix. **Verify a static mirror on content, never status codes.**
 
 **Packaging (revised 2026-07-26).** There is **no ZIP and no `ship/` directory** —
 the submission is the deployed site plus the public repo (spec §8). `README.md` is
-at the repo root (GitHub's landing page *and* the source for `/readme`), `run.sh`
-at the root is the only launcher and doubles as requirement 5's artifact (it needs
-Go — the honest cost of dropping prebuilt binaries), and `build.sh` just builds
+at the repo root (GitHub's landing page *and* the source for `/readme`). There are
+**two launchers at the root and they launch different things** (split 2026-07-27):
+`run.sh` is requirement 5's artifact and opens two browser tabs — the deployed game
+(focused) and the GitHub README — needing nothing installed at all; `serve.sh` is the
+old `run.sh` verbatim and runs the server from source, needing Go (the honest cost of
+dropping prebuilt binaries). Rule 5 says "launches *the game*", and the game is the
+deployed web app, so a local Go server was launching the wrong artifact. `build.sh` just builds
 binaries. The `-tags ship` profile (`server/profile_{lab,ship}.go`) still compiles
 but has **no consumer**, since the deployed *lab* build is the deliverable; it is
 kept, not deleted, and stays CI-gated. **The gallery, leaderboard,
@@ -208,10 +213,12 @@ telemetry, export/merge, and device identity never ship.**
 day, red on every branch *and* on main, because `gate.yml` and `ship_gate.py`
 still built and unzipped a `dist/bitrate.zip` that `build.sh` had stopped
 producing. It is **repointed** now (spec §8): it copies the working tree into a
-fresh temp dir (minus `.git`, `data/`, `dist/`, `bin/`, venvs, caches), runs
-`bash run.sh` with network blocked, drives a full scored run headlessly, and
+fresh temp dir (minus `.git`, `data/`, `dist/`, `bin/`, venvs, caches), checks
+`bash run.sh` exits clean and prints both live URLs, then runs `bash serve.sh`
+with network blocked, drives a full scored run headlessly, and
 asserts the results card, server/reference score agreement, and zero
-non-localhost requests. Two `go run` traps it had to handle, both worth knowing:
+non-localhost requests. **Both launchers are gated** — gating only one would let
+the other rot, which is exactly how the gate broke in the first place. Two `go run` traps it had to handle, both worth knowing:
 a **cold compile** on a runner with no Go build cache needs a generous startup
 deadline, and `go run` runs the compiled server as a **child**, so killing the
 wrapper orphans the process holding the port — own the process group (same trap
@@ -324,8 +331,9 @@ ledger down and merging never implies running `deploy.sh`.
   the port. (Default `-addr` is `127.0.0.1:0`, an OS-assigned port; pass
   `-addr :4700` to bind wide for a phone or iPad on the LAN, and the server
   prints the reachable LAN URLs.)
-- `run.sh` here is the **dev** launcher (`go run ./server -dev`); the grader's
-  `run.sh` is generated into `dist/bitrate.zip` by `build.sh`.
+- `serve.sh` is the **dev** launcher (`go run ./server -dev`) — this was `run.sh`
+  until 2026-07-27. `run.sh` no longer starts anything: it opens the deployed
+  game and the GitHub README in two browser tabs and exits.
 - `BITRATE_NO_BROWSER=1` (or `-no-browser`) suppresses the courtesy browser open.
 - Golden sequence vectors in `server/sequence_test.go` are **frozen** — never
   regenerate them to make a test pass; a mismatch means stored seeds no longer
@@ -350,7 +358,7 @@ Step 10 is **partly done** (2026-07-26): `drum-pad` is frozen as the winner
 profiles); the README is written (**`README.md` at the repo root** — `ship/` was
 deleted 2026-07-26, there is no ZIP and no packaging dir) and rendered at `/readme` by
 both profiles from that one embedded source, linked from the results card and
-printed by `run.sh`; tile-size recommendations are badged in the first-open
+printed by `serve.sh`; tile-size recommendations are badged in the first-open
 picker (`{phone: 12mm, tablet: 20mm}`, off the screen's short edge).
 
 Two reversals worth knowing, both owner decisions on 2026-07-26 and both
@@ -364,9 +372,9 @@ recorded with rationale in the spec:
   NOT submit a ZIP** (spec §1 register item 7, §8). A ZIP cannot deliver a
   touchscreen, and unzip → start a server → find the LAN address → pair a tablet
   is more exotic setup than rule 5 allows. Rule 5 is satisfied *literally*
-  instead: `run.sh` exists and is **included in the public repo**. **So `run.sh`
-  and the `ship` profile must keep working and stay CI-gated even though nobody
-  is asked to run them** — they are rule 5's artifact and the fallback if the
+  instead: `run.sh` exists and is **included in the public repo**. **So `run.sh`,
+  `serve.sh` and the `ship` profile must keep working and stay CI-gated even
+  though nobody is asked to run them** — they are rule 5's artifact and the fallback if the
   site is down during grading. Accepted risk: site unreachable during grading =
   no score.
 - **The gallery SHIPS, and that's a feature** (reversal of "none of them ship").
@@ -485,7 +493,11 @@ was deliberately left unfixed and why.
 
 **What is actually left before submitting** (2026-07-27): (a) the README's own
 prose — it is at the repo root and the owner is writing it, plus the
-development-trajectory section (spec §9 TODO); (b) **redeploy** — main runs ahead
+development-trajectory section (spec §9 TODO). **Its "Running it yourself"
+section is stale as of the launcher split**: it still says `bash run.sh` starts
+a loopback server and takes `-addr :4700`, which is now `serve.sh`. Left
+deliberately for the owner, who is writing that file — do not edit it without
+being asked; (b) **redeploy** — main runs ahead
 of production, so the stream-typing keyboard map and the README move are not live;
 (c) settle the final defaults (they *are* shipped and taken from the best runs,
 but the evidence is n≈4 per cell). The repo is already public and the arm

@@ -122,7 +122,7 @@ func main() {
 		fmt.Printf("\n  ledger: %s\n  (%d runs · %d results · %d variants — this file only grows)\n", absData, nRuns, nResults, nVariants)
 	}
 	fmt.Printf("\n  (paste the URL into a browser if one doesn't open)\n\n")
-	// BITRATE_NO_BROWSER lets test harnesses that exec run.sh (which passes no
+	// BITRATE_NO_BROWSER lets test harnesses that exec serve.sh (which passes no
 	// flags) suppress the courtesy browser-open without editing the grader path.
 	if !*noBrowser && os.Getenv("BITRATE_NO_BROWSER") == "" {
 		go openBrowser(url)
