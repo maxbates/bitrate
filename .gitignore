@@ -5,6 +5,7 @@ bin/
 __pycache__/
 lab/.venv/
 lab/.venv
+lab/.synthetic-data/
 
 .gstack/
 .claude/worktrees/

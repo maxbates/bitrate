@@ -42,6 +42,12 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - run: python ship_gate.py
         working-directory: lab
+      # voice-babble's mic trigger is measured per player rather than guessed
+      # (spec §5). Nobody can test that by hand without a microphone, so it is
+      # driven headlessly over synthetic frames on the runner that already has
+      # Chromium.
+      - run: python voice_level_check.py
+        working-directory: lab
 
   # Minimal-container leg: no glibc, no xdg-open, network disabled — proves
   # the static binary runs anywhere and the URL-printing fallback carries
