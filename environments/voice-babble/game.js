@@ -46,6 +46,7 @@ const SET_KEY = 'bitrate_voice_set_v1';
 const DISPLAY_KEY = 'bitrate_voice_display_v1';
 const SENS_KEY = 'bitrate_voice_sens_v1';
 const TEMPLATES_KEY = 'bitrate_voice_templates_v1';
+const LEVEL_KEY = 'bitrate_voice_level_v1';
 const MAX_LANES = 9; // beyond this, lanes stop being readable
 
 let setName = 'solfege'; // do–ti is the default set
@@ -60,7 +61,7 @@ function loadSettings() {
   const d = localStorage.getItem(DISPLAY_KEY);
   if (d === 'chips' || d === 'lanes') display = d;
   const v = localStorage.getItem(SENS_KEY);
-  if (v && SENS[v]) sensName = v;
+  if (v && (v === 'auto' || SENS[v])) sensName = v;
 }
 
 function effectiveDisplay() {
@@ -282,7 +283,23 @@ function classify(vec) {
 // to spare; steady background is rejected by the noise-floor term below, not
 // by this number.
 const SENS = { high: 0.0012, med: 0.003, low: 0.007 };
-let sensName = 'high'; // raw mic gain (no AGC) usually runs quiet — default sensitive
+
+// ...and the presets are still a guess that has to fit every mic, every gain
+// setting and every room. `auto` (the default) replaces the guess with a
+// measurement — see the level check below — and keeps the presets as the
+// manual override. A per-player measured number, so it lives in localStorage
+// and NOT in the config hash; only the mode name is config (spec §5).
+let sensName = 'auto';
+let measured = null; // {ambient, speech, thr, snrDb, syllables, at} or null
+
+// The absolute floor in force right now. Auto with nothing measured yet (the
+// level check was skipped, or expired) falls back to the middle preset rather
+// than the most sensitive one: under double-penalized errors, a missed
+// syllable is half the cost of an invented one.
+function absFloor() {
+  if (sensName === 'auto') return measured ? measured.thr : SENS.med;
+  return SENS[sensName] || SENS.med;
+}
 
 // Onset trigger = the higher of a multiple of the tracked noise floor or the
 // preset's absolute floor. The floor term rejects *steady* background (it can't
@@ -291,7 +308,7 @@ let sensName = 'high'; // raw mic gain (no AGC) usually runs quiet — default s
 // are still dropped downstream by MIN_FRAMES, so this doesn't leak steady
 // noise in.
 const TRIGGER_MULT = 1.8;
-function onsetThreshold() { return Math.max(seg.noiseFloor * TRIGGER_MULT, SENS[sensName] || SENS.high); }
+function onsetThreshold() { return Math.max(seg.noiseFloor * TRIGGER_MULT, absFloor()); }
 
 // The noise floor gates itself: every non-triggering frame used to be folded
 // into it at one rate, so a sound that ramped in under the trigger dragged the
@@ -333,10 +350,20 @@ function frameLoop() {
   requestAnimationFrame(frameLoop);
 }
 
-function processFrame(f) {
-  updateLevel(f.rms);
+// >= 0 while buffered frames are being pushed back through this same state
+// machine to count syllables (see replaySyllables). The count has to come from
+// the *live* segmenter, not a reimplementation of it, or "heard 5 of 5" would
+// be a claim about code that doesn't run during the game.
+let replayCount = -1;
+const replaying = () => replayCount >= 0;
 
-  const sens = SENS[sensName] || SENS.high;
+function processFrame(f) {
+  if (!replaying()) {
+    updateLevel(f.rms);
+    if (state === 'level') { levelFrame(f); return; }
+  }
+
+  const sens = absFloor();
   const onsetThresh = onsetThreshold();
   const endThresh = Math.max(seg.noiseFloor * 1.6, sens * 0.5);
   if (f.rms > seg.peak) seg.peak = f.rms;
@@ -378,7 +405,7 @@ function processFrame(f) {
         seg.classified = true;
         emitUtterance();
       }
-      if (run && run.started && run.keylog.length) {
+      if (!replaying() && run && run.started && run.keylog.length) {
         const last = run.keylog[run.keylog.length - 1];
         if (last.t_keyup_ms === null) last.t_keyup_ms = f.t - run.t0;
       }
@@ -408,6 +435,7 @@ function startSyllable(f) {
 }
 
 function emitUtterance() {
+  if (replaying()) { replayCount++; return; } // counting only — no classify, no selection
   const vec = utteranceVector(seg.frames);
   if (state === 'calib') {
     calibCapture(vec);
@@ -425,7 +453,7 @@ function finishUtterance(t) {
   seg.dip = false;
   seg.runMax = 0;
   // keyup analog: utterance end timestamp onto the last logged selection.
-  if (run && run.started && run.keylog.length) {
+  if (!replaying() && run && run.started && run.keylog.length) {
     const last = run.keylog[run.keylog.length - 1];
     if (last.t_keyup_ms === null) last.t_keyup_ms = t - run.t0;
   }
@@ -442,6 +470,294 @@ function updateLevel(rms) {
   const bar = $('calib-level-bar');
   if (state === 'calib' && bar) bar.style.width = pct + '%';
 }
+
+// ---- mic level check (spec §5) ----
+//
+// The onset floor is not a constant to be guessed once for every mic and every
+// room; it is a property of this mic in this room, measurable in four seconds:
+// a silent window gives the room, a counted phrase gives the voice, and the
+// trigger goes at the log-midpoint between them. Runs before symbol
+// calibration — templates recorded through a wrong trigger are captured off
+// noise-opened segments and are worse than useless.
+
+const LV = {
+  SETTLE_MS: 500,     // let the room (and the player) settle before measuring
+  AMBIENT_MS: 1200,
+  SPEAK_MAX_MS: 5000,
+  PHRASE: ['one', 'two', 'three', 'four', 'five'],
+  // Counting: everyone already owns the cadence, it needs no reading, it is
+  // five discrete syllables with voiced onsets, and it works in any accent.
+  END_QUIET_MS: 700,  // this much quiet after real speech ends the window early
+  MIN_VOICED: 20,     // ~330 ms clearly above the room before the window may end early
+  MIN_HEARD: 6,       // ~100 ms above the room before we believe the mic works at all
+};
+
+// Trigger placement. Must clear the room (multiplicatively — the VAD works in
+// amplitude) and sit under the quietest syllable; 0.28 is ~11 dB below the
+// voiced peak, where an unstressed syllable and an onset ramp live.
+const AMB_MULT = 2.5;
+const SPEECH_FRAC = 0.28;
+// A stale threshold from a different room is worse than none, and re-measuring
+// costs four seconds — so it expires rather than following the player around.
+const LEVEL_MAX_AGE_MS = 6 * 3600 * 1000;
+
+let lvl = null; // {phase, t0, ambient: [], speech: [], next, ...}
+
+function loadLevel() {
+  try {
+    const m = JSON.parse(localStorage.getItem(LEVEL_KEY) || 'null');
+    if (!m || m.v !== 1 || !(m.thr > 0)) return null;
+    // Date.now() only stamps the measurement's age — all run timing is still
+    // performance.now(); a wall clock never touches the scoring path.
+    if (!(Date.now() - m.at < LEVEL_MAX_AGE_MS)) return null;
+    return m;
+  } catch { return null; }
+}
+
+function saveLevel(m) {
+  try { localStorage.setItem(LEVEL_KEY, JSON.stringify(Object.assign({ v: 1, at: Date.now() }, m))); }
+  catch { /* fine */ }
+}
+
+const dbfs = (r) => 20 * Math.log10(Math.max(r, 1e-7));
+const DB_FLOOR = -66;
+const dbPct = (r) => Math.max(0, Math.min(100, ((dbfs(r) - DB_FLOOR) / -DB_FLOOR) * 100));
+
+function median(xs) {
+  if (!xs.length) return 0;
+  const s = xs.slice().sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)];
+}
+
+// The typical voiced peak, not the single loudest sample: median of the top
+// decile. One door slam shouldn't define how loud the player is.
+function voicedLevel(xs) {
+  if (!xs.length) return 0;
+  const s = xs.slice().sort((a, b) => a - b);
+  return median(s.slice(Math.floor(s.length * 0.9)));
+}
+
+function startLevelCheck(next) {
+  lvl = {
+    phase: 'settle', t0: 0, ambient: [], speech: [],
+    ambRef: 0, voiced: 0, lastVoicedT: 0, result: null,
+    next: next || afterLevel,
+  };
+  setState('level');
+  const bar = $('lv-meter-bar');
+  if (bar) bar.style.width = '0';
+  renderLevelPanel();
+}
+
+// Leaving without measuring. Auto with nothing measured falls back to the
+// middle preset, so a skip degrades to the old behaviour rather than trapping
+// anyone — which matters most when the mic is dead, since the panel would
+// otherwise sit at "quiet for a moment" forever.
+function skipLevelCheck() {
+  if (!lvl) return;
+  if (lvl.autoTimer) clearTimeout(lvl.autoTimer);
+  const next = lvl.next;
+  lvl = null;
+  next();
+}
+
+// Called from processFrame while state === 'level'.
+function levelFrame(f) {
+  if (!lvl) return;
+  if (!lvl.t0) lvl.t0 = f.t;
+  const bar = $('lv-meter-bar');
+  if (bar) bar.style.width = dbPct(f.rms).toFixed(1) + '%';
+
+  if (lvl.phase === 'settle') {
+    if (f.t - lvl.t0 >= LV.SETTLE_MS) { lvl.phase = 'ambient'; lvl.t0 = f.t; renderLevelPanel(); }
+    return;
+  }
+  if (lvl.phase === 'ambient') {
+    lvl.ambient.push(f);
+    if (f.t - lvl.t0 >= LV.AMBIENT_MS) {
+      lvl.ambRef = Math.max(median(lvl.ambient.map((x) => x.rms)), 1e-6);
+      lvl.phase = 'speak';
+      lvl.t0 = f.t;
+      renderLevelPanel();
+    } else {
+      const left = Math.ceil((LV.AMBIENT_MS - (f.t - lvl.t0)) / 1000);
+      if (left !== lvl.shownLeft) { // once a second, not once a frame
+        lvl.shownLeft = left;
+        $('lv-prompt').innerHTML = '<span class="quiet">listening to the room… ' + left + '</span>';
+      }
+    }
+    return;
+  }
+  if (lvl.phase === 'speak') {
+    lvl.speech.push(f);
+    if (f.rms > lvl.ambRef * 3) { lvl.voiced++; lvl.lastVoicedT = f.t; }
+    // End as soon as the phrase is clearly over, rather than making everyone
+    // sit through the full window.
+    const done = lvl.voiced >= LV.MIN_VOICED && f.t - lvl.lastVoicedT > LV.END_QUIET_MS;
+    if (done || f.t - lvl.t0 >= LV.SPEAK_MAX_MS) finishLevelCheck();
+  }
+}
+
+// Push the buffered frames back through the live segmenter with a candidate
+// threshold and count what it would have opened. `seg` is saved and restored
+// so the real state machine is untouched.
+function replaySyllables(frames, thr, ambient) {
+  const savedSeg = Object.assign({}, seg);
+  const savedMeasured = measured, savedSens = sensName;
+  sensName = 'auto';
+  measured = { thr };
+  Object.assign(seg, {
+    active: false, frames: [], onsetT: 0, quietFrames: 0, refractory: 0,
+    classified: false, noiseFloor: Math.min(NOISE_MAX, ambient), peak: 0,
+    runMax: 0, dip: false, dipMin: 0,
+  });
+  replayCount = 0;
+  for (const f of frames) processFrame(f);
+  // A syllable still open at the end of the buffer counts if it got far enough
+  // to have been classified live.
+  if (seg.active && !seg.classified && seg.frames.length >= MIN_FRAMES) replayCount++;
+  const n = replayCount;
+  replayCount = -1;
+  Object.assign(seg, savedSeg);
+  measured = savedMeasured;
+  sensName = savedSens;
+  return n;
+}
+
+// Turn the two windows into a threshold. Pure, so voiceDebug can exercise it.
+function deriveThreshold(ambient, speech) {
+  const lo = ambient * AMB_MULT;    // must clear the room
+  const hi = speech * SPEECH_FRAC;  // must sit under the quietest syllable
+  // When the band inverts the room is too loud relative to the voice. Fall
+  // back to the room floor: erring toward a missed syllable rather than an
+  // invented selection is the correct direction under double-penalized errors.
+  const noisy = !(hi > lo);
+  const thr = noisy ? lo : Math.min(Math.max(Math.sqrt(ambient * speech), lo), hi);
+  return { thr, noisy, snrDb: dbfs(speech) - dbfs(ambient) };
+}
+
+// Pure over its frame buffers (replaySyllables saves and restores `seg`), so
+// the synthetic harness can exercise the whole measurement without a mic.
+function computeLevel(ambientFrames, speechFrames) {
+  const ambient = Math.max(median(ambientFrames.map((f) => f.rms)), 1e-6);
+  const speech = voicedLevel(speechFrames.map((f) => f.rms));
+  // "Did anything reach the mic" is a *separate*, gentler question from "has
+  // the phrase finished" (LV.MIN_VOICED, 3x, used only to end the window
+  // early). Sharing one gate made a merely noisy room — where the voice sits
+  // only ~10 dB over the din, so few frames clear 3x — report itself as a dead
+  // microphone, which is the wrong advice entirely.
+  const heard = speechFrames.filter((f) => f.rms > ambient * 2).length;
+  const heardNothing = heard < LV.MIN_HEARD || speech <= ambient * 1.5;
+  const d = deriveThreshold(ambient, speech);
+  const syllables = heardNothing ? 0 : replaySyllables(speechFrames, d.thr, ambient);
+  return {
+    ambient, speech, thr: d.thr, snrDb: d.snrDb, syllables,
+    noisy: d.noisy, heardNothing,
+    clean: !heardNothing && !d.noisy && syllables === LV.PHRASE.length,
+  };
+}
+
+function finishLevelCheck() {
+  lvl.result = computeLevel(lvl.ambient, lvl.speech);
+  lvl.phase = 'result';
+  renderLevelPanel();
+  if (lvl.result.clean) lvl.autoTimer = setTimeout(acceptLevel, 1400);
+}
+
+function acceptLevel() {
+  if (!lvl || !lvl.result) return;
+  if (lvl.autoTimer) { clearTimeout(lvl.autoTimer); lvl.autoTimer = null; }
+  const r = lvl.result;
+  const next = lvl.next;
+  if (!r.heardNothing) {
+    measured = { ambient: r.ambient, speech: r.speech, thr: r.thr, snrDb: r.snrDb, syllables: r.syllables };
+    saveLevel(measured);
+    measured = loadLevel() || measured;
+    // The tracker starts at the room we just measured instead of walking to it
+    // from a hardcoded 0.003.
+    seg.noiseFloor = Math.min(NOISE_MAX, r.ambient);
+  }
+  lvl = null;
+  next();
+}
+
+function afterLevel() {
+  if (!templates) startCalibration();
+  else toPractice();
+}
+
+function renderLevelPanel() {
+  const step = $('lv-step'), prompt = $('lv-prompt');
+  const readout = $('lv-readout'), foot = $('lv-foot'), meter = $('lv-meter');
+  meter.classList.remove('has-trigger');
+  readout.innerHTML = '';
+  foot.innerHTML = '';
+  if (!lvl) return;
+
+  // A tappable skip, not just Esc: the device most likely to have a mic
+  // problem is the one without a keyboard.
+  const skipBtn = '<button type="button" class="act click" id="lv-skip"><kbd>Esc</kbd>skip</button>';
+
+  if (lvl.phase === 'settle' || lvl.phase === 'ambient') {
+    step.textContent = 'step 1 of 2 · the room';
+    prompt.innerHTML = '<span class="quiet">quiet for a moment…</span>';
+    readout.innerHTML = 'measuring the background noise you\'re playing over';
+    foot.innerHTML = skipBtn;
+    return;
+  }
+  if (lvl.phase === 'speak') {
+    step.textContent = 'step 2 of 2 · your voice';
+    prompt.innerHTML = LV.PHRASE.map((w) => '<span class="count">' + w + '</span>').join('');
+    readout.innerHTML = 'say it out loud, evenly, at the volume you\'ll play at';
+    foot.innerHTML = skipBtn;
+    return;
+  }
+
+  const r = lvl.result;
+  step.textContent = 'result';
+  meter.classList.add('has-trigger');
+  document.documentElement.style.setProperty('--lv-trigger', dbPct(r.thr).toFixed(1) + '%');
+
+  if (r.heardNothing) {
+    prompt.innerHTML = '<span class="quiet">didn\'t hear you</span>';
+    readout.innerHTML = '<span class="warn">nothing came through above the room noise</span><br>' +
+      'check the right microphone is selected and that it isn\'t muted, then try again';
+  } else {
+    prompt.innerHTML = r.clean
+      ? '<span class="quiet">✓ ready</span>'
+      : '<span class="quiet">have another go</span>';
+    const counted = r.syllables === LV.PHRASE.length
+      ? '<span class="ok">heard ' + r.syllables + ' of ' + LV.PHRASE.length + ' words</span>'
+      : '<span class="warn">heard ' + r.syllables + ' of ' + LV.PHRASE.length + ' words</span>';
+    readout.innerHTML =
+      'room <b>' + dbfs(r.ambient).toFixed(0) + ' dB</b>' +
+      ' · voice <b>' + dbfs(r.speech).toFixed(0) + ' dB</b>' +
+      ' · headroom <b>' + r.snrDb.toFixed(0) + ' dB</b><br>' +
+      'trigger set to <b>' + dbfs(r.thr).toFixed(0) + ' dB</b> · ' + counted +
+      (r.noisy
+        ? '<br><span class="warn">too much background noise for your voice level — move somewhere quieter, or speak up. quiet sounds may be missed.</span>'
+        : r.syllables > LV.PHRASE.length
+          ? '<br>extra words usually means background noise — try again somewhere quieter'
+          : r.syllables < LV.PHRASE.length
+            ? '<br>say the words a little louder, with a small gap between each'
+            : '');
+  }
+  foot.innerHTML =
+    (r.heardNothing ? '' : '<button type="button" class="act click" id="lv-accept"><kbd>Enter</kbd>use this</button>') +
+    '<button type="button" class="act click" id="lv-again">measure again</button>';
+}
+
+$('lv-foot').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  if (b.id === 'lv-accept') acceptLevel();
+  else if (b.id === 'lv-skip') skipLevelCheck();
+  else if (b.id === 'lv-again') {
+    if (lvl && lvl.autoTimer) clearTimeout(lvl.autoTimer);
+    startLevelCheck(lvl ? lvl.next : afterLevel);
+  }
+});
 
 // ---- calibration ----
 
@@ -596,9 +912,10 @@ function setState(next) {
   document.body.classList.toggle('armed', next === 'armed');
   overlay.hidden = next !== 'error';
   resultsEl.hidden = next !== 'done';
-  $('stage').hidden = next === 'done' || next === 'calib';
+  $('stage').hidden = next === 'done' || next === 'calib' || next === 'level';
   $('calib').hidden = next !== 'calib';
-  $('topbar').hidden = next === 'done' || next === 'calib';
+  $('level').hidden = next !== 'level';
+  $('topbar').hidden = next === 'done' || next === 'calib' || next === 'level';
   if (next !== 'practice' && sheetOpen) closeSheet();
   if (next === 'practice') {
     modeBanner.textContent = 'practice';
@@ -771,6 +1088,16 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (state === 'loading') return;
+  if (state === 'level') {
+    if (e.key === 'Enter' && lvl && lvl.result && !lvl.result.heardNothing) {
+      e.preventDefault();
+      acceptLevel();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      skipLevelCheck();
+    }
+    return;
+  }
   if (state === 'calib') {
     if (e.key === 'Escape' && loadTemplates()) { e.preventDefault(); templates = loadTemplates(); toPractice(); }
     return;
@@ -958,7 +1285,7 @@ function scheduleFlush(delay) {
 // ---- HUD ----
 
 function renderHud() {
-  if (state === 'done' || state === 'calib') return;
+  if (state === 'done' || state === 'calib' || state === 'level') return;
   if (!run || !run.started) {
     $('hud-bps').innerHTML = '0.0 <span class="hud-unit">bits/s</span>';
     $('hud-time').textContent = state === 'armed' ? CONFIG.duration_s + 's' : '';
@@ -1113,17 +1440,29 @@ $('seg-sens').addEventListener('click', (e) => {
   try { localStorage.setItem(SENS_KEY, sensName); } catch { /* fine */ }
   buildConfig();
   syncSheet();
+  // Switching to auto with nothing measured (or an expired measurement) runs
+  // the check rather than silently sitting on the fallback preset.
+  if (sensName === 'auto' && !measured) { closeSheet(); startLevelCheck(toPractice); return; }
   toPractice();
+});
+
+$('recheck-level').addEventListener('click', () => {
+  closeSheet();
+  startLevelCheck(toPractice);
 });
 
 // Live mic readout while the sheet is open — shows whether "didn't
 // register" is a level problem (peak below threshold) at a glance.
 setInterval(() => {
   if (!sheetOpen || !micOK) return;
+  const src = sensName !== 'auto' ? 'preset ' + sensName
+    : measured ? 'measured ' + measured.snrDb.toFixed(0) + ' dB headroom'
+      : 'auto — not measured yet, using ' + SENS.med;
   $('mic-stats').textContent =
     'mic: noise ' + seg.noiseFloor.toFixed(4) +
     ' · peak ' + seg.peak.toFixed(3) +
-    ' · trigger ' + onsetThreshold().toFixed(4) + ' (= midline)';
+    ' · trigger ' + onsetThreshold().toFixed(4) + ' (= midline)' +
+    ' · floor ' + absFloor().toFixed(4) + ' (' + src + ')';
 }, 400);
 
 $('recalibrate').addEventListener('click', () => {
@@ -1160,6 +1499,40 @@ window.voiceDebug = {
   classify,
   processFrame,
   state: () => state,
+
+  // ---- level check, without a microphone ----
+  // Synthesize an ambient window plus `words` bursts at `speech` RMS and run
+  // the real measurement over them: same percentiles, same threshold algebra,
+  // same segmenter replay. This is how the level check is regression-tested.
+  measureFake({ ambient = 0.002, speech = 0.05, words = 5, wordMs = 240, gapMs = 140 } = {}) {
+    const dt = 1000 / 60;
+    let t = 0;
+    const mk = (rms) => ({ rms: Math.max(rms, 1e-7), zcr: 0.05, bands: new Array(BANDS).fill(-60), t: (t += dt) });
+    const jitter = () => 0.75 + 0.5 * Math.random();
+    const amb = () => mk(ambient * jitter());
+    const ambientFrames = [];
+    for (let i = 0; i < Math.round(LV.AMBIENT_MS / dt); i++) ambientFrames.push(amb());
+    const speechFrames = [];
+    for (let w = 0; w < words; w++) {
+      const n = Math.round(wordMs / dt);
+      for (let i = 0; i < n; i++) {
+        // Raised-cosine envelope: a real syllable ramps in and out, which is
+        // what the dip-based boundary detector keys on.
+        const env = 0.5 - 0.5 * Math.cos((2 * Math.PI * (i + 0.5)) / n);
+        speechFrames.push(mk(ambient + (speech - ambient) * env * jitter()));
+      }
+      for (let i = 0; i < Math.round(gapMs / dt); i++) speechFrames.push(amb());
+    }
+    return computeLevel(ambientFrames, speechFrames);
+  },
+  deriveThreshold,
+  measured: () => measured,
+  absFloor,
+  skipLevel() {
+    if (state !== 'level') return 'not in level check';
+    skipLevelCheck();
+    return 'skipped';
+  },
 };
 
 // ---- boot ----
@@ -1171,9 +1544,15 @@ window.BitrateResults.trackHeaderHeight();
 buildConfig();
 scheduleFlush(1500);
 templates = loadTemplates();
+measured = loadLevel();
+if (measured) seg.noiseFloor = Math.min(NOISE_MAX, measured.ambient);
 
 function beginSession() {
-  if (!templates) {
+  // Level check first: templates recorded through a wrong trigger are captured
+  // off noise-opened segments, so measuring after calibrating fixes nothing.
+  if (sensName === 'auto' && !measured) {
+    startLevelCheck(afterLevel);
+  } else if (!templates) {
     startCalibration();
     // startRun is deferred until calibration completes (calibCapture).
   } else {

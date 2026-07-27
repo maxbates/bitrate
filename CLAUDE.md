@@ -150,7 +150,7 @@ server/         Tier A Go (main package; module is at the repo ROOT because
                 go:embed can't reach a parent dir — root embed.go embeds
                 environments/)
 environments/   one dir per game + common/ (shared results renderer, CSS)
-lab/            Tier B: synthetic player, ship gate (gate now orphaned)
+lab/            Tier B: synthetic player, ship gate, voice level check
 deploy/aws/     CloudFormation + deploy.sh for the public instance
 README.md       the deliverable README: GitHub landing page AND /readme
 run.sh          the only launcher (needs Go); requirement 5's artifact
@@ -200,20 +200,31 @@ at the repo root (GitHub's landing page *and* the source for `/readme`), `run.sh
 at the root is the only launcher and doubles as requirement 5's artifact (it needs
 Go — the honest cost of dropping prebuilt binaries), and `build.sh` just builds
 binaries. The `-tags ship` profile (`server/profile_{lab,ship}.go`) still compiles
-but has **no consumer**, since the deployed *lab* build is the deliverable;
-likewise `lab/ship_gate.py` has no ZIP to unzip and is no longer run by
-`scripts/pre-push`. Both are kept, not deleted — repointing the gate at a running
-server is an open task, and until then nothing enforces no-external-requests at
-runtime. **The gallery, leaderboard,
+but has **no consumer**, since the deployed *lab* build is the deliverable; it is
+kept, not deleted, and stays CI-gated. **The gallery, leaderboard,
 telemetry, export/merge, and device identity never ship.**
 
-**The ship gate can never break.** `lab/ship_gate.py` unzips `dist/bitrate.zip`
-into a fresh temp dir, runs `run.sh` with network blocked, drives a full scored
-run headlessly, and asserts the results card, server/reference score agreement,
-and zero non-localhost requests. Wired as a required CI check plus a local
+**The ship gate can never break** — and on 2026-07-27 it had been broken for a
+day, red on every branch *and* on main, because `gate.yml` and `ship_gate.py`
+still built and unzipped a `dist/bitrate.zip` that `build.sh` had stopped
+producing. It is **repointed** now (spec §8): it copies the working tree into a
+fresh temp dir (minus `.git`, `data/`, `dist/`, `bin/`, venvs, caches), runs
+`bash run.sh` with network blocked, drives a full scored run headlessly, and
+asserts the results card, server/reference score agreement, and zero
+non-localhost requests. Two `go run` traps it had to handle, both worth knowing:
+a **cold compile** on a runner with no Go build cache needs a generous startup
+deadline, and `go run` runs the compiled server as a **child**, so killing the
+wrapper orphans the process holding the port — own the process group (same trap
+as the `pkill` note in Ops gotchas). Wired as a required CI check plus a local
 pre-push hook (`SKIP_GATE=1` to skip). The gate proves the mechanical path; the
 manual Wi-Fi-off ritual on a clean Linux box before submitting proves the human
 one.
+
+**`lab/synthetic_player.py` plays `/env/stream-typing/`, not `/`** — `/`
+redirects to the ship game (drum pad, touch), so a bare base URL waits forever
+for a `#stream` that never renders. `stream_url()` resolves this; pass a full
+environment URL to override. Also: `--duration` below 60 s does not work (the
+scored run is always 60 s), so the results wait times out.
 
 ## Environments as they stand
 

@@ -38,7 +38,7 @@ const ENV_META = {
     name: 'voice babble',
     n: 'N = 6–9',
     trait: 'your voice',
-    desc: 'calibrate your voice, then sing do re mi.',
+    desc: 'calibrate your voice, then sing do re mi. needs a quiet room.',
     href: 'voice-babble/',
   },
   'lane-tap': {

@@ -8,14 +8,27 @@ echo "pre-push: go vet + tests"
 go vet ./...
 go test ./...
 
-# The ship gate used to run here: it unzipped dist/bitrate.zip and drove a
-# headless scored run to prove the grader's offline path worked. There is no ZIP
-# any more (spec §8 — the submission is the deployed site plus the public repo),
-# so the gate has nothing to unzip and is not invoked. `lab/ship_gate.py` is kept
-# on disk because most of it — drive a real scored run headlessly, assert the
-# results card, assert the server and reference scores agree, assert zero
-# non-localhost requests — is still exactly what we want to assert against a
-# running server rather than a bundle. Repointing it at a plain `run.sh` is the
-# open task; until then the checks above are what gates a push.
+# The ship gate. It stopped running here when the ZIP was dropped (spec §8) and
+# was repointed on 2026-07-27: it now copies a clean tree, runs `bash run.sh`
+# exactly as the README instructs, and drives a full headless scored run —
+# asserting the results card, server/reference score agreement, and zero
+# non-localhost requests. That last assertion is the ONLY runtime enforcement of
+# the no-external-requests property, so it is wired back in here rather than
+# left to CI alone.
 #
-# SKIP_GATE is still honoured so existing muscle memory and scripts don't break.
+# It takes ~90 s (a full 60 s scored run plus startup). SKIP_GATE=1 skips it.
+if [[ -n "${SKIP_GATE:-}" ]]; then
+  echo "pre-push: ship gate SKIPPED (SKIP_GATE set)"
+  exit 0
+fi
+
+VENV_PY="$PWD/lab/.venv/bin/python"
+if [[ ! -x "$VENV_PY" ]]; then
+  echo "pre-push: no lab/.venv — skipping the ship gate (CI still runs it)."
+  echo "          set it up with: python3 -m venv lab/.venv &&"
+  echo "          lab/.venv/bin/pip install -r lab/requirements.txt"
+  exit 0
+fi
+
+echo "pre-push: ship gate (~90 s; SKIP_GATE=1 to skip)"
+(cd lab && "$VENV_PY" ship_gate.py)

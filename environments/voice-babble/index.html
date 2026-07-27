@@ -40,12 +40,29 @@
     <div id="notice" hidden></div>
   </main>
 
+  <!-- Mic level check (spec §5, voice-babble). The onset trigger used to be a
+       hand-tuned constant that had to fit every mic and every room. It is not a
+       constant: it is a property of THIS mic in THIS room, and four seconds
+       measures it — a silent window for the room, a counted phrase for the
+       voice, trigger at the log-midpoint between them. Runs before template
+       calibration, because templates recorded through a wrong trigger are
+       captured off noise and are worse than useless. -->
+  <section id="level" hidden>
+    <div class="c-title">mic check</div>
+    <div class="c-sub">be somewhere quiet — background noise opens selections you didn't make, and every one of those costs you twice · nothing leaves this device</div>
+    <div id="lv-step"></div>
+    <div id="lv-prompt"></div>
+    <div id="lv-meter"><span id="lv-meter-bar"></span></div>
+    <div id="lv-readout"></div>
+    <div class="c-foot" id="lv-foot"></div>
+  </section>
+
   <!-- Calibration: records your voice's template for each symbol.
        Calibration is a config compiler (spec §2.6): it writes static
        templates; the run itself contains nothing adaptive. -->
   <section id="calib" hidden>
     <div class="c-title">calibrate — your voice, your templates</div>
-    <div class="c-sub">say each sound when it appears · tip: pitch neighbors apart — the recognizer hears pitch · everything stays on this machine</div>
+    <div class="c-sub">say each sound when it appears · tip: pitch neighbors apart — the recognizer hears pitch · quiet room, everything stays on this machine</div>
     <div class="seg" id="calib-seg-set">
       <button data-v="babble-6">babble 6</button>
       <button data-v="babble-8">babble 8</button>
@@ -89,7 +106,7 @@
   <div id="mic-gate" hidden>
     <div id="mic-gate-card">
       <div id="mic-gate-title">tap to enable the microphone</div>
-      <div id="mic-gate-sub">voice babble listens through your mic · everything stays on this device</div>
+      <div id="mic-gate-sub">voice babble listens through your mic · everything stays on this device · find a quiet spot first — background noise costs you selections</div>
       <button id="mic-gate-btn">enable microphone</button>
     </div>
   </div>
@@ -115,6 +132,7 @@
     <div class="sh-row">
       <span class="sh-label">mic trigger</span>
       <div class="seg" id="seg-sens">
+        <button data-v="auto">auto — measured</button>
         <button data-v="high">sensitive</button>
         <button data-v="med">medium</button>
         <button data-v="low">loud room</button>
@@ -122,6 +140,7 @@
     </div>
     <div class="sh-row">
       <span class="sh-label"></span>
+      <button type="button" class="act click" id="recheck-level">↻ re-check mic level</button>
       <button type="button" class="act click" id="recalibrate">↻ recalibrate this set</button>
     </div>
     <div class="sh-foot" id="mic-stats"></div>
