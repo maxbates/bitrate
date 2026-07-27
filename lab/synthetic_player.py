@@ -42,6 +42,17 @@ from playwright.sync_api import sync_playwright
 REPO = Path(__file__).resolve().parent.parent
 
 
+def stream_url(base: str) -> str:
+    """Where this harness plays.
+
+    It dispatches keystrokes, so it drives `stream-typing`. A bare base URL is
+    not enough any more: `/` redirects to the ship game (drum pad, a touch
+    game), so goto(base) lands somewhere with no `#stream` and the wait times
+    out. Callers may still pass a full environment URL.
+    """
+    return base if "/env/" in base else base.rstrip("/") + "/env/stream-typing/"
+
+
 def reference_bps(n: int, sc: int, si: int, t: float) -> float:
     """B = log2(N-1) * max(Sc-Si, 0) / t   (Shenoy et al. 2021)."""
     return math.log2(n - 1) * max(sc - si, 0) / t
@@ -86,7 +97,7 @@ def run(url: str, cps: float, error_rate: float, duration_s: int, seed: int,
         page = ctx.new_page()
         if check_requests:
             page.on("request", lambda req: requests.append(req.url))
-        page.goto(url)
+        page.goto(stream_url(url))
         page.wait_for_selector("#stream .ch", timeout=10_000)
 
         # Timer must not start on page load: HUD reads 0.0 (spec §2.5).
