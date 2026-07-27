@@ -141,8 +141,10 @@ server/         Tier A Go (main package; module is at the repo ROOT because
                 go:embed can't reach a parent dir — root embed.go embeds
                 environments/)
 environments/   one dir per game + common/ (shared results renderer, CSS)
-lab/            Tier B: synthetic player, ship gate
+lab/            Tier B: synthetic player, ship gate (gate now orphaned)
 deploy/aws/     CloudFormation + deploy.sh for the public instance
+README.md       the deliverable README: GitHub landing page AND /readme
+run.sh          the only launcher (needs Go); requirement 5's artifact
 dist/           build output (gitignored)
 ```
 
@@ -167,11 +169,19 @@ dist/           build output (gitignored)
   idempotent set-union. **Recompute, don't trust** — where keystroke logs are
   present the importer recomputes score and bot flags.
 - Lab builds default `-data` to `~/.bitrate/data` (absolute) so launching from a
-  worktree doesn't fork the ledger; ship/gate builds keep relative `data/`.
+  worktree doesn't fork the ledger; ship-tag builds keep relative `data/`.
 
-**Ship profile.** `lab` and `ship` are two build profiles from one tree; `-tags
-ship` compiles the lab routes out (`server/profile_{lab,ship}.go`). Stripping
-happens in the *build*, not behind runtime flags. **The gallery, leaderboard,
+**Packaging (revised 2026-07-26).** There is **no ZIP and no `ship/` directory** —
+the submission is the deployed site plus the public repo (spec §8). `README.md` is
+at the repo root (GitHub's landing page *and* the source for `/readme`), `run.sh`
+at the root is the only launcher and doubles as requirement 5's artifact (it needs
+Go — the honest cost of dropping prebuilt binaries), and `build.sh` just builds
+binaries. The `-tags ship` profile (`server/profile_{lab,ship}.go`) still compiles
+but has **no consumer**, since the deployed *lab* build is the deliverable;
+likewise `lab/ship_gate.py` has no ZIP to unzip and is no longer run by
+`scripts/pre-push`. Both are kept, not deleted — repointing the gate at a running
+server is an open task, and until then nothing enforces no-external-requests at
+runtime. **The gallery, leaderboard,
 telemetry, export/merge, and device identity never ship.**
 
 **The ship gate can never break.** `lab/ship_gate.py` unzips `dist/bitrate.zip`
@@ -303,7 +313,8 @@ with content-addressed variants (5), runs/leaderboard/gallery (6), public deploy
 
 Step 10 is **partly done** (2026-07-26): `drum-pad` is frozen as the winner
 (`shipGame` in `server/api.go`, one constant driving the `/` redirect in both
-profiles); the README is written (`ship/README.md`) and rendered at `/readme` by
+profiles); the README is written (**`README.md` at the repo root** — `ship/` was
+deleted 2026-07-26, there is no ZIP and no packaging dir) and rendered at `/readme` by
 both profiles from that one embedded source, linked from the results card and
 printed by `run.sh`; tile-size recommendations are badged in the first-open
 picker (`{phone: 12mm, tablet: 20mm}`, off the screen's short edge).

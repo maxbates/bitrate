@@ -123,8 +123,8 @@ func TestShipReadmeRenders(t *testing.T) {
 
 func readmeSource(t *testing.T) string {
 	t.Helper()
-	if len(bitrate.ShipREADME) == 0 {
-		t.Fatal("ship/README.md embedded empty")
+	if len(bitrate.README) == 0 {
+		t.Fatal("README.md embedded empty")
 	}
-	return string(bitrate.ShipREADME)
+	return string(bitrate.README)
 }

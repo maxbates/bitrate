@@ -1,10 +1,9 @@
 package main
 
-// /readme — the deliverable's design rationale, rendered from the same
-// ship/README.md that ships as a file in the bundle (spec §8). One source of
-// truth: a grader who never opens a browser reads the markdown, and one who
-// only ever opens the URL reads it rendered, and neither can drift from the
-// other.
+// /readme — the design rationale the brief asks for, rendered from the repo's
+// root README.md (spec §8). One source of truth: whoever reads the markdown on
+// GitHub and whoever opens the URL are looking at the same bytes, so the two
+// cannot drift.
 //
 // The markdown subset below is hand-rolled because Tier A is standard library
 // only (spec §4.1) — no dependency is worth taking for one page. It covers
@@ -26,7 +25,7 @@ func (s *server) handleReadme(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	var b bytes.Buffer
 	b.WriteString(readmeHead)
-	b.WriteString(renderMarkdown(string(bitrate.ShipREADME)))
+	b.WriteString(renderMarkdown(string(bitrate.README)))
 	b.WriteString(readmeFoot)
 	_, _ = w.Write(b.Bytes())
 }
@@ -35,7 +34,7 @@ func (s *server) handleReadme(w http.ResponseWriter, r *http.Request) {
 // the source than the rendering (and so `curl /readme.md` is a sane thing).
 func handleReadmeRaw(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	_, _ = w.Write(bitrate.ShipREADME)
+	_, _ = w.Write(bitrate.README)
 }
 
 // ---- markdown subset ----

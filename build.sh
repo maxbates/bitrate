@@ -1,32 +1,27 @@
 #!/usr/bin/env bash
-# Build script (spec §4.2, §8): go build per target plus ZIP assembly.
-# No bundler, no transpiler, no Node toolchain — this is the entire build
-# system.
+# Build script (spec §4.2). No bundler, no transpiler, no Node toolchain —
+# this is the entire build system.
 #
-#   ./build.sh          build dist/bitrate.zip (ship profile) + local lab binary
-#   ./build.sh lab      local lab binary only (bin/bitrate)
+#   ./build.sh          build the local binary (bin/bitrate)
+#   ./build.sh deploy   also cross-compile the linux/amd64 binary the public
+#                       instance runs (deploy/aws/deploy.sh does this itself)
+#
+# There is no ZIP step any more. The submission is the deployed site plus the
+# public repo (spec §8, §1 register item 7), so there is no bundle to assemble
+# and no packaging directory to stage it in — `ship/` is gone, and README.md
+# lives at the repo root where GitHub and /readme both read the same file.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if [[ "${1:-}" != "lab" ]]; then
-  echo "==> ship binaries (static, CGO off, -tags ship)"
-  rm -rf dist/stage
-  mkdir -p dist/stage/bin
-  for target in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
-    os="${target%/*}" arch="${target#*/}"
-    out="dist/stage/bin/bitrate-${os}-${arch}"
-    echo "    ${out}"
-    CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-      go build -tags ship -trimpath -ldflags="-s -w" -o "$out" ./server
-  done
-  cp ship/run.sh ship/README.md dist/stage/
-  chmod +x dist/stage/run.sh dist/stage/bin/*
-  rm -f dist/bitrate.zip
-  (cd dist/stage && zip -rq ../bitrate.zip .)
-  echo "==> dist/bitrate.zip ($(du -h dist/bitrate.zip | cut -f1))"
-fi
-
-echo "==> lab binary (bin/bitrate)"
+echo "==> local binary (bin/bitrate)"
 mkdir -p bin
 go build -o bin/bitrate ./server
+
+if [[ "${1:-}" == "deploy" ]]; then
+  echo "==> linux/amd64 binary (dist/bitrate-linux-amd64)"
+  mkdir -p dist
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o dist/bitrate-linux-amd64 ./server
+fi
+
 echo "done"
